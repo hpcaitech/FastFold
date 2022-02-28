@@ -15,7 +15,7 @@ def ensure_divisibility(numerator, denominator):
     assert numerator % denominator == 0, '{} is not divisible by {}'.format(numerator, denominator)
 
 
-def init_shadowcore(tensor_model_parallel_size_=1):
+def init_dap(tensor_model_parallel_size_=1):
 
     assert dist.is_initialized()
 
@@ -51,7 +51,7 @@ def init_shadowcore(tensor_model_parallel_size_=1):
         print('> initialize data parallel with size {}'.format(data_parallel_size_))
 
 
-def shadowcore_is_initialized():
+def dap_is_initialized():
     """Check if model and data parallel groups are initialized."""
     if _TENSOR_MODEL_PARALLEL_GROUP is None or \
         _DATA_PARALLEL_GROUP is None:

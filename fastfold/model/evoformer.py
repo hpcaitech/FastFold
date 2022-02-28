@@ -6,7 +6,7 @@ from fastfold.model import MSAStack, OutProductMean, PairStack
 
 class Evoformer(nn.Module):
 
-    def __init__(self, d_node, d_pair):
+    def __init__(self, d_node=256, d_pair=128):
         super(Evoformer, self).__init__()
 
         self.msa_stack = MSAStack(d_node, d_pair, p_drop=0.15)

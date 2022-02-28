@@ -4,34 +4,34 @@ import os
 import torch
 import torch.nn as nn
 
-from fastfold.distributed import init_shadowcore
+from fastfold.distributed import init_dap
 from fastfold.model import Evoformer
 
 
 def main():
 
-    parser = argparse.ArgumentParser(description='MSA Attention Standalone Perf Benchmark')
-    parser.add_argument("--dap-size", default=1, type=int)
+    parser = argparse.ArgumentParser(description='Evoformer Standalone Perf Benchmark')
+    parser.add_argument("--dap-size", default=1, type=int, help='batch size')
     parser.add_argument('--batch-size', default=1, type=int, help='batch size')
-    parser.add_argument('--msa-length', default=132, type=int, help='Sequence Length of Input')
+    parser.add_argument('--msa-length', default=132, type=int, help='Sequence Length of MSA')
     parser.add_argument('--res-length',
                         default=256,
                         type=int,
-                        help='Start Range of Number of Sequences')
+                        help='Sequence Length of Residues')
     parser.add_argument('--trials', default=50, type=int, help='Number of Trials to Execute')
     parser.add_argument('--warmup-trials', default=5, type=int, help='Warmup Trials to discard')
     parser.add_argument('--layers',
                         default=12,
                         type=int,
-                        help='Attention Layers to Execute to Gain CPU/GPU Time Overlap')
+                        help='Evoformer Layers to Execute')
     parser.add_argument('--cm', default=256, type=int, help='MSA hidden dimension')
     parser.add_argument('--cz', default=128, type=int, help='Pair hidden dimension')
     parser.add_argument('--heads', default=8, type=int, help='Number of Multihead Attention heads')
     parser.add_argument('--openfold',
                         action='store_true',
-                        help='torch.nn.MultitheadAttention Version.')
+                        help='Benchmark with Evoformer Implementation from OpenFold.')
     parser.add_argument('--fwd', action='store_true', help='Only execute Fwd Pass.')
-    parser.add_argument('--prof', action='store_true', help='Only execute Fwd Pass.')
+    parser.add_argument('--prof', action='store_true', help='run with profiler.')
 
     args = parser.parse_args()
 
@@ -48,10 +48,10 @@ def main():
     print(
         'Training in distributed mode with multiple processes, 1 GPU per process. Process %d, total %d.'
         % (args.global_rank, args.world_size))
-    init_shadowcore(args.tensor_model_parallel_size)
+    init_dap(args.dap_size)
 
     precision = torch.bfloat16
-    if args.tensor_model_parallel_size > 1:
+    if args.dap_size > 1:
         # (PyTorch issue) Currently All2All communication does not support the Bfloat16 datatype in PyTorch
         precision = torch.float16
 
@@ -111,13 +111,13 @@ def main():
         stop_evt_bwd.append(torch.cuda.Event(enable_timing=True))
 
     inputs_node = torch.randn(args.batch_size,
-                              args.msa_length // args.tensor_model_parallel_size,
+                              args.msa_length // args.dap_size,
                               args.res_length,
                               args.cm,
                               dtype=precision,
                               device=torch.device("cuda")).requires_grad_(True)
     inputs_pair = torch.randn(args.batch_size,
-                              args.res_length // args.tensor_model_parallel_size,
+                              args.res_length // args.dap_size,
                               args.res_length,
                               args.cz,
                               dtype=precision,

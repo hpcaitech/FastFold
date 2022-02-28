@@ -141,7 +141,7 @@ install_requires = fetch_requirements('./requirements.txt')
 
 setup(
     name='fastfold',
-    version='0.0.1-beta',
+    version='0.1.0-beta',
     packages=find_packages(exclude=(
         'assets',
         'benchmark',

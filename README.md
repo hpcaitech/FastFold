@@ -13,9 +13,9 @@ FastFold provides a **high-performance implementation of Evoformer** with the fo
 1. Excellent kernel performance on GPU platform
 2. Supporting Dynamic Axial Parallelism(DAP)
     * Break the memory limit of single GPU and reduce the overall training time
-    * Distributed inference can significantly speed up inference and make extremely long sequence inference possible
+    * DAP can significantly speed up inference and make ultra-long sequence inference possible
 3. Ease of use
-    * Replace a few lines and you can use FastFold in your project
+    * Huge performance gains with a few lines changes
     * You don't need to care about how the parallel part is implemented
 
 ## Installation
@@ -38,6 +38,24 @@ cd FastFold
 python setup.py install --cuda_ext
 ```
 
+## Usage
+
+You can use `Evoformer` as `nn.Module` in your project after `from fastfold.model import Evoformer`:
+
+```python
+from fastfold.model import Evoformer
+evoformer_layer = Evoformer()
+```
+
+If you want to use Dynamic Axial Parallelism, add a line of initialize with `fastfold.distributed.init_dap` after `torch.distributed.init_process_group`.
+
+```python
+from fastfold.distributed import init_dap
+
+torch.distributed.init_process_group(backend='nccl', init_method='env://')
+init_dap(args.dap_size)
+```
+
 ## Performance Benchmark
 
 We have included a performance benchmark script in `./benchmark`. You can benchmark the performance of Evoformer using different settings.
@@ -45,6 +63,13 @@ We have included a performance benchmark script in `./benchmark`. You can benchm
 ```shell
 cd ./benchmark
 torchrun --nproc_per_node=1 perf.py --msa-length 128 --res-length 256
+```
+
+Benchmark Dynamic Axial Parallelism with 2 GPUs:
+
+```shell
+cd ./benchmark
+torchrun --nproc_per_node=2 perf.py --msa-length 128 --res-length 256 --dap-size 2
 ```
 
 If you want to benchmark with [OpenFold](https://github.com/aqlaboratory/openfold), you need to install OpenFold first and benchmark with option `--openfold`:
