@@ -35,7 +35,7 @@ You can get the FastFold source and install it with setuptools:
 ```shell
 git clone https://github.com/hpcaitech/FastFold
 cd FastFold
-python setup.py install --cuda_ext
+python setup.py install
 ```
 
 ## Usage

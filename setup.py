@@ -1,6 +1,5 @@
 import os
 import subprocess
-import sys
 
 import torch
 from setuptools import setup, find_packages
@@ -46,11 +45,6 @@ def append_nvcc_threads(nvcc_extra_args):
     return nvcc_extra_args
 
 
-def fetch_requirements(path):
-    with open(path, 'r') as fd:
-        return [r.strip() for r in fd.readlines()]
-
-
 if not torch.cuda.is_available():
     # https://github.com/NVIDIA/apex/issues/486
     # Extension builds after https://github.com/pytorch/pytorch/pull/23408 attempt to query torch.cuda.get_device_capability(),
@@ -88,56 +82,50 @@ ext_modules = []
 # https://github.com/pytorch/pytorch/commit/eb7b39e02f7d75c26d8a795ea8c7fd911334da7e#diff-4632522f237f1e4e728cb824300403ac
 version_dependent_macros = ['-DVERSION_GE_1_1', '-DVERSION_GE_1_3', '-DVERSION_GE_1_5']
 
-if "--cuda_ext" in sys.argv:
-    sys.argv.remove("--cuda_ext")
+if CUDA_HOME is None:
+    raise RuntimeError(
+        "Are you sure your environment has nvcc available?  If you're installing within a container from https://hub.docker.com/r/pytorch/pytorch, only images whose names contain 'devel' will provide nvcc."
+    )
+else:
+    check_cuda_torch_binary_vs_bare_metal(CUDA_HOME)
 
-    if CUDA_HOME is None:
-        raise RuntimeError(
-            "--cuda_ext was requested, but nvcc was not found.  Are you sure your environment has nvcc available?  If you're installing within a container from https://hub.docker.com/r/pytorch/pytorch, only images whose names contain 'devel' will provide nvcc."
-        )
-    else:
-        check_cuda_torch_binary_vs_bare_metal(CUDA_HOME)
-
-        def cuda_ext_helper(name, sources, extra_cuda_flags):
-            return CUDAExtension(
-                name=name,
-                sources=[
-                    os.path.join('fastfold/model/kernel/cuda_native/csrc', path) for path in sources
-                ],
-                include_dirs=[
-                    os.path.join(this_dir, 'fastfold/model/kernel/cuda_native/csrc')
-                ],
-                extra_compile_args={
-                    'cxx': ['-O3'] + version_dependent_macros,
-                    'nvcc':
-                        append_nvcc_threads(['-O3', '--use_fast_math'] + version_dependent_macros +
-                                            extra_cuda_flags)
-                })
+    def cuda_ext_helper(name, sources, extra_cuda_flags):
+        return CUDAExtension(
+            name=name,
+            sources=[
+                os.path.join('fastfold/model/kernel/cuda_native/csrc', path) for path in sources
+            ],
+            include_dirs=[
+                os.path.join(this_dir, 'fastfold/model/kernel/cuda_native/csrc/include')
+            ],
+            extra_compile_args={
+                'cxx': ['-O3'] + version_dependent_macros,
+                'nvcc':
+                    append_nvcc_threads(['-O3', '--use_fast_math'] + version_dependent_macros +
+                                        extra_cuda_flags)
+            })
 
 
 
-        cc_flag = ['-gencode', 'arch=compute_70,code=sm_70']
-        _, bare_metal_major, _ = get_cuda_bare_metal_version(CUDA_HOME)
-        if int(bare_metal_major) >= 11:
-            cc_flag.append('-gencode')
-            cc_flag.append('arch=compute_80,code=sm_80')
+    cc_flag = ['-gencode', 'arch=compute_70,code=sm_70']
+    _, bare_metal_major, _ = get_cuda_bare_metal_version(CUDA_HOME)
+    if int(bare_metal_major) >= 11:
+        cc_flag.append('-gencode')
+        cc_flag.append('arch=compute_80,code=sm_80')
 
-        extra_cuda_flags = [
-            '-std=c++14', '-maxrregcount=50', '-U__CUDA_NO_HALF_OPERATORS__',
-            '-U__CUDA_NO_HALF_CONVERSIONS__', '--expt-relaxed-constexpr', '--expt-extended-lambda'
-        ]
+    extra_cuda_flags = [
+        '-std=c++14', '-maxrregcount=50', '-U__CUDA_NO_HALF_OPERATORS__',
+        '-U__CUDA_NO_HALF_CONVERSIONS__', '--expt-relaxed-constexpr', '--expt-extended-lambda'
+    ]
 
-        ext_modules.append(
-            cuda_ext_helper('fastfold_layer_norm_cuda',
-                            ['layer_norm_cuda.cpp', 'layer_norm_cuda_kernel.cu'],
-                            extra_cuda_flags + cc_flag))
+    ext_modules.append(
+        cuda_ext_helper('fastfold_layer_norm_cuda',
+                        ['layer_norm_cuda.cpp', 'layer_norm_cuda_kernel.cu'],
+                        extra_cuda_flags + cc_flag))
 
-        ext_modules.append(
-            cuda_ext_helper('fastfold_softmax_cuda', ['softmax_cuda.cpp', 'softmax_cuda_kernel.cu'],
-                            extra_cuda_flags + cc_flag))
-
-
-install_requires = fetch_requirements('./requirements.txt')
+    ext_modules.append(
+        cuda_ext_helper('fastfold_softmax_cuda', ['softmax_cuda.cpp', 'softmax_cuda_kernel.cu'],
+                        extra_cuda_flags + cc_flag))
 
 setup(
     name='fastfold',
@@ -145,13 +133,12 @@ setup(
     packages=find_packages(exclude=(
         'assets',
         'benchmark',
-        'notebooks',
-        'scripts',
         '*.egg-info',
     )),
     description=
     'Optimizing Protein Structure Prediction Model Training and Inference on GPU Clusters',
     ext_modules=ext_modules,
+    package_data={'fastfold': ['model/kernel/cuda_native/csrc/*']},
     cmdclass={'build_ext': BuildExtension} if ext_modules else {},
-    install_requires=install_requires,
+    install_requires=['einops', 'colossalai'],
 )
