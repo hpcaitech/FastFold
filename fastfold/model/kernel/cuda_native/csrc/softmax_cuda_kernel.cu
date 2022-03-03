@@ -1,9 +1,11 @@
+#include <math_constants.h>
+#include <torch/extension.h>
+
 #include <iostream>
 
 #include "ATen/ATen.h"
 #include "ATen/cuda/CUDAContext.h"
 #include "compat.h"
-#include "softmax.cuh"
 
 #define CHECK_CUDA(x) TORCH_CHECK(x.is_cuda(), #x " must be a CUDA tensor")
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
@@ -11,36 +13,317 @@
     CHECK_CUDA(x);     \
     CHECK_CONTIGUOUS(x)
 
+__inline__ __device__ float WarpAllReduceMax(float val) {
+    for (int mask = 1; mask < 32; mask *= 2) {
+        val = max(val, __shfl_xor_sync(0xffffffff, val, mask));
+    }
+    return val;
+}
+
+__inline__ __device__ float WarpAllReduceSum(float val) {
+    for (int mask = 1; mask < 32; mask *= 2) {
+        val += __shfl_xor_sync(0xffffffff, val, mask);
+    }
+    return val;
+}
+
+////////////////
+
+__global__ void fastfold_softmax_fp32(float *input, float *output, int rows, int cols) {
+    int threadidx_x = threadIdx.x / 32;
+    int threadidx_y = threadIdx.x % 32;
+    int row_offset = blockIdx.x * 4 + threadidx_x;
+    int cols_per_thread = cols / 32;
+
+    float buf[32];
+
+    int lane_id = threadidx_y;
+
+    float *row_input = input + row_offset * cols;
+    float *row_output = output + row_offset * cols;
+
+    float thread_max = -1 * CUDART_INF_F;
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        buf[i] = row_input[lane_id * cols_per_thread + i];
+    }
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        thread_max = max(thread_max, buf[i]);
+    }
+
+    float warp_max = WarpAllReduceMax(thread_max);
+
+    float thread_sum = 0.f;
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; ++i) {
+        buf[i] = __expf(buf[i] - warp_max);
+        thread_sum += buf[i];
+    }
+
+    float warp_sum = WarpAllReduceSum(thread_sum);
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; ++i) {
+        row_output[lane_id * cols_per_thread + i] = __fdividef(buf[i], warp_sum);
+    }
+}
+
+__global__ void fastfold_softmax_bfp16(at::BFloat16 *input, at::BFloat16 *output, int rows,
+                                       int cols) {
+    int threadidx_x = threadIdx.x / 32;
+    int threadidx_y = threadIdx.x % 32;
+    int row_offset = blockIdx.x * 4 + threadidx_x;
+    int cols_per_thread = cols / 32;
+
+    float buf[32];
+
+    int lane_id = threadidx_y;
+
+    at::BFloat16 *row_input = input + row_offset * cols;
+    at::BFloat16 *row_output = output + row_offset * cols;
+
+    float thread_max = -1 * CUDART_INF_F;
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        buf[i] = static_cast<float>(row_input[lane_id * cols_per_thread + i]);
+    }
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        thread_max = max(thread_max, buf[i]);
+    }
+
+    float warp_max = WarpAllReduceMax(thread_max);
+
+    float thread_sum = 0.f;
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; ++i) {
+        buf[i] = __expf(buf[i] - warp_max);
+        thread_sum += buf[i];
+    }
+
+    float warp_sum = WarpAllReduceSum(thread_sum);
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; ++i) {
+        row_output[lane_id * cols_per_thread + i] =
+            static_cast<at::BFloat16>(__fdividef(buf[i], warp_sum));
+    }
+}
+
+__global__ void fastfold_softmax_grad_fp32(float *d_output, float *output, float *d_input, int rows,
+                                           int cols) {
+    int threadidx_x = threadIdx.x / 32;
+    int threadidx_y = threadIdx.x % 32;
+    int row_offset = blockIdx.x * 4 + threadidx_x;
+    int cols_per_thread = cols / 32;
+
+    float y_buf[32];
+    float dy_buf[32];
+
+    int lane_id = threadidx_y;
+
+    float *row_d_output = d_output + row_offset * cols;
+    float *row_output = output + row_offset * cols;
+    float *row_d_input = d_input + row_offset * cols;
+
+    float thread_max = -1 * CUDART_INF_F;
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        y_buf[i] = row_output[lane_id * cols_per_thread + i];
+        dy_buf[i] = row_d_output[lane_id * cols_per_thread + i];
+    }
+
+    float thread_sum = 0.f;
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        thread_sum += y_buf[i] * dy_buf[i];
+    }
+
+    float warp_sum = WarpAllReduceSum(thread_sum);
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; ++i) {
+        row_d_input[lane_id * cols_per_thread + i] = (dy_buf[i] - warp_sum) * y_buf[i];
+    }
+}
+
+__global__ void fastfold_softmax_grad_bfp16(at::BFloat16 *d_output, at::BFloat16 *output,
+                                            at::BFloat16 *d_input, int rows, int cols) {
+    int threadidx_x = threadIdx.x / 32;
+    int threadidx_y = threadIdx.x % 32;
+    int row_offset = blockIdx.x * 4 + threadidx_x;
+    int cols_per_thread = cols / 32;
+
+    float y_buf[32];
+    float dy_buf[32];
+
+    int lane_id = threadidx_y;
+
+    at::BFloat16 *row_d_output = d_output + row_offset * cols;
+    at::BFloat16 *row_output = output + row_offset * cols;
+    at::BFloat16 *row_d_input = d_input + row_offset * cols;
+
+    float thread_max = -1 * CUDART_INF_F;
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        y_buf[i] = static_cast<float>(row_output[lane_id * cols_per_thread + i]);
+        dy_buf[i] = static_cast<float>(row_d_output[lane_id * cols_per_thread + i]);
+    }
+
+    float thread_sum = 0.f;
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        thread_sum += y_buf[i] * dy_buf[i];
+    }
+
+    float warp_sum = WarpAllReduceSum(thread_sum);
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; ++i) {
+        row_d_input[lane_id * cols_per_thread + i] =
+            static_cast<at::BFloat16>((dy_buf[i] - warp_sum) * y_buf[i]);
+    }
+}
+
 at::Tensor softmax(at::Tensor input, int rows, int cols) {
     CHECK_INPUT(input);
     at::Tensor output = at::empty_like(input);
-    fastfold::softmax::DirectLoad<at::BFloat16, float> load((at::BFloat16 *)input.data_ptr(),
-                                                            int64_t(cols));
-    fastfold::softmax::DirectStore<float, at::BFloat16> store((at::BFloat16 *)output.data_ptr(),
-                                                              int64_t(cols));
 
-    auto cuda_stream = at::cuda::getCurrentCUDAStream().stream();
-    fastfold::softmax::DispatchSoftmax<decltype(load), decltype(store), float>(cuda_stream, load,
-                                                                               store, rows, cols);
+    int grid = rows / 4;
+    dim3 block(128);
+
+    if (input.dtype() == torch::kFloat32) {
+        fastfold_softmax_fp32<<<grid, block>>>((float *)input.data_ptr(),
+                                               (float *)output.data_ptr(), rows, cols);
+    } else {
+        fastfold_softmax_bfp16<<<grid, block>>>((at::BFloat16 *)input.data_ptr(),
+                                                (at::BFloat16 *)output.data_ptr(), rows, cols);
+    }
 
     return output;
 }
 
-at::Tensor softmax_gradient(at::Tensor d_output, at::Tensor input, int rows, int cols) {
-    CHECK_INPUT(input);
-    at::Tensor grad_input = at::empty_like(input);
-    fastfold::softmax::DirectLoad<at::BFloat16, float> load_d((at::BFloat16 *)d_output.data_ptr(),
-                                                              int64_t(cols));
-    fastfold::softmax::DirectLoad<at::BFloat16, float> load((at::BFloat16 *)input.data_ptr(),
-                                                            int64_t(cols));
-    fastfold::softmax::DirectStore<float, at::BFloat16> store((at::BFloat16 *)grad_input.data_ptr(),
-                                                              int64_t(cols));
+at::Tensor softmax_gradient(at::Tensor d_output, at::Tensor output, int rows, int cols) {
+    CHECK_INPUT(output);
+    at::Tensor grad_input = at::empty_like(output);
 
-    auto cuda_stream = at::cuda::getCurrentCUDAStream().stream();
-    fastfold::softmax::DispatchSoftmaxGrad<decltype(load), decltype(load_d), decltype(store),
-                                           float>(cuda_stream, load, load_d, store, rows, cols);
+    int grid = rows / 4;
+    dim3 block(128);
+
+    if (output.dtype() == torch::kFloat32) {
+        fastfold_softmax_grad_fp32<<<grid, block>>>((float *)d_output.data_ptr(),
+                                                    (float *)output.data_ptr(),
+                                                    (float *)grad_input.data_ptr(), rows, cols);
+    } else {
+        fastfold_softmax_grad_bfp16<<<grid, block>>>(
+            (at::BFloat16 *)d_output.data_ptr(), (at::BFloat16 *)output.data_ptr(),
+            (at::BFloat16 *)grad_input.data_ptr(), rows, cols);
+    }
 
     return grad_input;
+}
+
+////////////////
+
+__global__ void fastfold_softmax_scale_mask_fp32(float *input, float *mask, float *output, int rows,
+                                                 int cols, float scale, int head) {
+    int threadidx_x = threadIdx.x / 32;
+    int threadidx_y = threadIdx.x % 32;
+    int row_offset = blockIdx.x * 4 + threadidx_x;
+    int cols_per_thread = cols / 32;
+
+    float buf[32];
+
+    int lane_id = threadidx_y;
+
+    float *row_input = input + row_offset * cols;
+    float *row_output = output + row_offset * cols;
+    float *mask_ptr = mask + ((row_offset / (head * cols)) * cols);
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        if (mask_ptr[lane_id * cols_per_thread + i] == 0) {
+            buf[i] = -1 * CUDART_INF_F;
+        } else {
+            buf[i] = row_input[lane_id * cols_per_thread + i] * scale;
+        }
+    }
+
+    float thread_max = -1 * CUDART_INF_F;
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        thread_max = max(thread_max, buf[i]);
+    }
+
+    float warp_max = WarpAllReduceMax(thread_max);
+
+    float thread_sum = 0.f;
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; ++i) {
+        buf[i] = __expf(buf[i] - warp_max);
+        thread_sum += buf[i];
+    }
+
+    float warp_sum = WarpAllReduceSum(thread_sum);
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; ++i) {
+        row_output[lane_id * cols_per_thread + i] = __fdividef(buf[i], warp_sum);
+    }
+}
+
+__global__ void fastfold_softmax_scale_mask_bfp16(at::BFloat16 *input, at::BFloat16 *mask,
+                                                  at::BFloat16 *output, int rows, int cols,
+                                                  float scale, int head) {
+    int threadidx_x = threadIdx.x / 32;
+    int threadidx_y = threadIdx.x % 32;
+    int row_offset = blockIdx.x * 4 + threadidx_x;
+    int cols_per_thread = cols / 32;
+
+    float buf[32];
+
+    int lane_id = threadidx_y;
+
+    at::BFloat16 *row_input = input + row_offset * cols;
+    at::BFloat16 *row_output = output + row_offset * cols;
+    at::BFloat16 *mask_ptr = mask + ((row_offset / (head * cols)) * cols);
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        if (mask_ptr[lane_id * cols_per_thread + i] == 0) {
+            buf[i] = -1 * CUDART_INF_F;
+        } else {
+            buf[i] = static_cast<float>(row_input[lane_id * cols_per_thread + i]) * scale;
+        }
+    }
+
+    float thread_max = -1 * CUDART_INF_F;
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        thread_max = max(thread_max, buf[i]);
+    }
+
+    float warp_max = WarpAllReduceMax(thread_max);
+
+    float thread_sum = 0.f;
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; ++i) {
+        buf[i] = __expf(buf[i] - warp_max);
+        thread_sum += buf[i];
+    }
+
+    float warp_sum = WarpAllReduceSum(thread_sum);
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; ++i) {
+        row_output[lane_id * cols_per_thread + i] =
+            static_cast<at::BFloat16>(__fdividef(buf[i], warp_sum));
+    }
 }
 
 at::Tensor fused_scale_mask_softmax_forward(at::Tensor input, at::Tensor mask, int rows, int cols,
@@ -49,40 +332,238 @@ at::Tensor fused_scale_mask_softmax_forward(at::Tensor input, at::Tensor mask, i
     CHECK_INPUT(mask);
     int head = input.sizes()[2];
     at::Tensor output = at::empty_like(input);
-    // (const SRC* src, const int8_t* mask, int64_t row_size, SRC scale)
-    fastfold::softmax::ScaleMaskLoad<at::BFloat16, float> load((at::BFloat16 *)input.data_ptr(),
-                                                               (at::BFloat16 *)mask.data_ptr(),
-                                                               int64_t(cols), int64_t(head), scale);
-    fastfold::softmax::DirectStore<float, at::BFloat16> store((at::BFloat16 *)output.data_ptr(),
-                                                              int64_t(cols));
 
-    auto cuda_stream = at::cuda::getCurrentCUDAStream().stream();
-    fastfold::softmax::DispatchSoftmax<decltype(load), decltype(store), float>(cuda_stream, load,
-                                                                               store, rows, cols);
+    int grid = rows / 4;
+    dim3 block(128);
+
+    if (input.dtype() == torch::kFloat32) {
+        fastfold_softmax_scale_mask_fp32<<<grid, block>>>(
+            (float *)input.data_ptr(), (float *)mask.data_ptr(), (float *)output.data_ptr(), rows,
+            cols, scale, head);
+    } else {
+        fastfold_softmax_scale_mask_bfp16<<<grid, block>>>(
+            (at::BFloat16 *)input.data_ptr(), (at::BFloat16 *)mask.data_ptr(),
+            (at::BFloat16 *)output.data_ptr(), rows, cols, scale, head);
+    }
 
     return output;
 }
 
-at::Tensor fused_scale_mask_softmax_backward(at::Tensor d_output, at::Tensor input, at::Tensor mask,
-                                             int rows, int cols, float scale) {
-    CHECK_INPUT(input);
-    CHECK_INPUT(mask);
-    int head = input.sizes()[2];
-    at::Tensor grad_input = at::empty_like(input);
-    fastfold::softmax::DirectLoad<at::BFloat16, float> load_d((at::BFloat16 *)d_output.data_ptr(),
-                                                              int64_t(cols));
-    fastfold::softmax::DirectLoad<at::BFloat16, float> load((at::BFloat16 *)input.data_ptr(),
-                                                            int64_t(cols));
-    // (DST* dst, const int8_t* mask, int64_t row_size, DST scale)
-    fastfold::softmax::ScaleMaskStore<float, at::BFloat16> store(
-        (at::BFloat16 *)grad_input.data_ptr(), (at::BFloat16 *)mask.data_ptr(), int64_t(cols),
-        int64_t(head), scale);
+__global__ void fastfold_softmax_scale_mask_grad_fp32(float *d_output, float *output,
+                                                      float *d_input, float *mask, int rows,
+                                                      int cols, float scale, int head) {
+    int threadidx_x = threadIdx.x / 32;
+    int threadidx_y = threadIdx.x % 32;
+    int row_offset = blockIdx.x * 4 + threadidx_x;
+    int cols_per_thread = cols / 32;
 
-    auto cuda_stream = at::cuda::getCurrentCUDAStream().stream();
-    fastfold::softmax::DispatchSoftmaxGrad<decltype(load), decltype(load_d), decltype(store),
-                                           float>(cuda_stream, load, load_d, store, rows, cols);
+    float y_buf[32];
+    float dy_buf[32];
+
+    int lane_id = threadidx_y;
+
+    float *row_d_output = d_output + row_offset * cols;
+    float *row_output = output + row_offset * cols;
+    float *row_d_input = d_input + row_offset * cols;
+    float *mask_ptr = mask + ((row_offset / (head * cols)) * cols);
+
+    float thread_max = -1 * CUDART_INF_F;
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        y_buf[i] = row_output[lane_id * cols_per_thread + i];
+        dy_buf[i] = row_d_output[lane_id * cols_per_thread + i];
+    }
+
+    float thread_sum = 0.f;
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        thread_sum += y_buf[i] * dy_buf[i];
+    }
+
+    float warp_sum = WarpAllReduceSum(thread_sum);
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; ++i) {
+        if (mask_ptr[lane_id * cols_per_thread + i] != 0) {
+            row_d_input[lane_id * cols_per_thread + i] =
+                scale * ((dy_buf[i] - warp_sum) * y_buf[i]);
+        } else {
+            row_d_input = 0;
+        }
+    }
+}
+
+__global__ void fastfold_softmax_scale_mask_grad_bfp16(at::BFloat16 *d_output, at::BFloat16 *output,
+                                                       at::BFloat16 *d_input, at::BFloat16 *mask,
+                                                       int rows, int cols, float scale, int head) {
+    int threadidx_x = threadIdx.x / 32;
+    int threadidx_y = threadIdx.x % 32;
+    int row_offset = blockIdx.x * 4 + threadidx_x;
+    int cols_per_thread = cols / 32;
+
+    float y_buf[32];
+    float dy_buf[32];
+
+    int lane_id = threadidx_y;
+
+    at::BFloat16 *row_d_output = d_output + row_offset * cols;
+    at::BFloat16 *row_output = output + row_offset * cols;
+    at::BFloat16 *row_d_input = d_input + row_offset * cols;
+    at::BFloat16 *mask_ptr = mask + ((row_offset / (head * cols)) * cols);
+
+    float thread_max = -1 * CUDART_INF_F;
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        y_buf[i] = static_cast<float>(row_output[lane_id * cols_per_thread + i]);
+        dy_buf[i] = static_cast<float>(row_d_output[lane_id * cols_per_thread + i]);
+    }
+
+    float thread_sum = 0.f;
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        thread_sum += y_buf[i] * dy_buf[i];
+    }
+
+    float warp_sum = WarpAllReduceSum(thread_sum);
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; ++i) {
+        if (mask_ptr[lane_id * cols_per_thread + i] != 0) {
+            row_d_input[lane_id * cols_per_thread + i] =
+                static_cast<at::BFloat16>(scale * ((dy_buf[i] - warp_sum) * y_buf[i]));
+        } else {
+            row_d_input = 0;
+        }
+    }
+}
+
+at::Tensor fused_scale_mask_softmax_backward(at::Tensor d_output, at::Tensor output,
+                                             at::Tensor mask, int rows, int cols, float scale) {
+    CHECK_INPUT(output);
+    CHECK_INPUT(mask);
+    int head = output.sizes()[2];
+    at::Tensor grad_input = at::empty_like(output);
+
+    int grid = rows / 4;
+    dim3 block(128);
+
+    if (output.dtype() == torch::kFloat32) {
+        fastfold_softmax_scale_mask_grad_fp32<<<grid, block>>>(
+            (float *)d_output.data_ptr(), (float *)output.data_ptr(),
+            (float *)grad_input.data_ptr(), (float *)mask.data_ptr(), rows, cols, scale, head);
+    } else {
+        fastfold_softmax_scale_mask_grad_bfp16<<<grid, block>>>(
+            (at::BFloat16 *)d_output.data_ptr(), (at::BFloat16 *)output.data_ptr(),
+            (at::BFloat16 *)grad_input.data_ptr(), (at::BFloat16 *)mask.data_ptr(), rows, cols,
+            scale, head);
+    }
 
     return grad_input;
+}
+
+////////////////
+
+__global__ void fastfold_softmax_scale_mask_bias_fp32(float *input, float *mask, float *bias,
+                                                      float *output, int rows, int cols,
+                                                      float scale, int head) {
+    int threadidx_x = threadIdx.x / 32;
+    int threadidx_y = threadIdx.x % 32;
+    int row_offset = blockIdx.x * 4 + threadidx_x;
+    int cols_per_thread = cols / 32;
+
+    float buf[32];
+
+    int lane_id = threadidx_y;
+
+    float *row_input = input + row_offset * cols;
+    float *row_output = output + row_offset * cols;
+    float *mask_ptr = mask + ((row_offset / (head * cols)) * cols);
+    float *bias_ptr = bias + ((row_offset % (head * cols)) * cols);
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        if (mask_ptr[lane_id * cols_per_thread + i] == 0) {
+            buf[i] = -1 * CUDART_INF_F;
+        } else {
+            buf[i] = row_input[lane_id * cols_per_thread + i] * scale +
+                     bias_ptr[lane_id * cols_per_thread + i];
+        }
+    }
+
+    float thread_max = -1 * CUDART_INF_F;
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        thread_max = max(thread_max, buf[i]);
+    }
+
+    float warp_max = WarpAllReduceMax(thread_max);
+
+    float thread_sum = 0.f;
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; ++i) {
+        buf[i] = __expf(buf[i] - warp_max);
+        thread_sum += buf[i];
+    }
+
+    float warp_sum = WarpAllReduceSum(thread_sum);
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; ++i) {
+        row_output[lane_id * cols_per_thread + i] = __fdividef(buf[i], warp_sum);
+    }
+}
+
+__global__ void fastfold_softmax_scale_mask_bias_bfp16(at::BFloat16 *input, at::BFloat16 *mask,
+                                                       at::BFloat16 *bias, at::BFloat16 *output,
+                                                       int rows, int cols, float scale, int head) {
+    int threadidx_x = threadIdx.x / 32;
+    int threadidx_y = threadIdx.x % 32;
+    int row_offset = blockIdx.x * 4 + threadidx_x;
+    int cols_per_thread = cols / 32;
+
+    float buf[32];
+
+    int lane_id = threadidx_y;
+
+    at::BFloat16 *row_input = input + row_offset * cols;
+    at::BFloat16 *row_output = output + row_offset * cols;
+    at::BFloat16 *mask_ptr = mask + ((row_offset / (head * cols)) * cols);
+    at::BFloat16 *bias_ptr = bias + ((row_offset % (head * cols)) * cols);
+
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        if (mask_ptr[lane_id * cols_per_thread + i] == 0) {
+            buf[i] = -1 * CUDART_INF_F;
+        } else {
+            buf[i] = static_cast<float>(row_input[lane_id * cols_per_thread + i]) * scale;
+            buf[i] += static_cast<float>(bias_ptr[lane_id * cols_per_thread + i]);
+        }
+    }
+
+    float thread_max = -1 * CUDART_INF_F;
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; i++) {
+        thread_max = max(thread_max, buf[i]);
+    }
+
+    float warp_max = WarpAllReduceMax(thread_max);
+
+    float thread_sum = 0.f;
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; ++i) {
+        buf[i] = __expf(buf[i] - warp_max);
+        thread_sum += buf[i];
+    }
+
+    float warp_sum = WarpAllReduceSum(thread_sum);
+#pragma unroll
+    for (int i = 0; i < cols_per_thread; ++i) {
+        row_output[lane_id * cols_per_thread + i] =
+            static_cast<at::BFloat16>(__fdividef(buf[i], warp_sum));
+    }
 }
 
 at::Tensor fused_scale_mask_bias_softmax_forward(at::Tensor input, at::Tensor mask, at::Tensor bias,
@@ -92,40 +573,45 @@ at::Tensor fused_scale_mask_bias_softmax_forward(at::Tensor input, at::Tensor ma
     CHECK_INPUT(bias);
     int head = input.sizes()[2];
     at::Tensor output = at::empty_like(input);
-    // (const SRC* src, const int8_t* mask, int64_t row_size, SRC scale)
-    fastfold::softmax::ScaleMaskBiasLoad<at::BFloat16, float> load(
-        (at::BFloat16 *)input.data_ptr(), (at::BFloat16 *)mask.data_ptr(),
-        (at::BFloat16 *)bias.data_ptr(), int64_t(cols), int64_t(head), scale);
-    fastfold::softmax::DirectStore<float, at::BFloat16> store((at::BFloat16 *)output.data_ptr(),
-                                                              int64_t(cols));
 
-    auto cuda_stream = at::cuda::getCurrentCUDAStream().stream();
-    fastfold::softmax::DispatchSoftmax<decltype(load), decltype(store), float>(cuda_stream, load,
-                                                                               store, rows, cols);
+    int grid = rows / 4;
+    dim3 block(128);
+
+    if (input.dtype() == torch::kFloat32) {
+        fastfold_softmax_scale_mask_bias_fp32<<<grid, block>>>(
+            (float *)input.data_ptr(), (float *)mask.data_ptr(), (float *)bias.data_ptr(),
+            (float *)output.data_ptr(), rows, cols, scale, head);
+    } else {
+        fastfold_softmax_scale_mask_bias_bfp16<<<grid, block>>>(
+            (at::BFloat16 *)input.data_ptr(), (at::BFloat16 *)mask.data_ptr(),
+            (at::BFloat16 *)bias.data_ptr(), (at::BFloat16 *)output.data_ptr(), rows, cols, scale,
+            head);
+    }
 
     return output;
 }
 
-at::Tensor fused_scale_mask_bias_softmax_backward(at::Tensor d_output, at::Tensor input,
+at::Tensor fused_scale_mask_bias_softmax_backward(at::Tensor d_output, at::Tensor output,
                                                   at::Tensor mask, at::Tensor bias, int rows,
                                                   int cols, float scale) {
-    CHECK_INPUT(input);
+    CHECK_INPUT(output);
     CHECK_INPUT(mask);
-    int head = input.sizes()[2];
-    // CHECK_INPUT(bias);
-    at::Tensor grad_input = at::empty_like(input);
-    fastfold::softmax::DirectLoad<at::BFloat16, float> load_d((at::BFloat16 *)d_output.data_ptr(),
-                                                              int64_t(cols));
-    fastfold::softmax::DirectLoad<at::BFloat16, float> load((at::BFloat16 *)input.data_ptr(),
-                                                            int64_t(cols));
-    // (DST* dst, const int8_t* mask, int64_t row_size, DST scale)
-    fastfold::softmax::ScaleMaskStore<float, at::BFloat16> store(
-        (at::BFloat16 *)grad_input.data_ptr(), (at::BFloat16 *)mask.data_ptr(), int64_t(cols),
-        int64_t(head), scale);
+    int head = output.sizes()[2];
+    at::Tensor grad_input = at::empty_like(output);
 
-    auto cuda_stream = at::cuda::getCurrentCUDAStream().stream();
-    fastfold::softmax::DispatchSoftmaxGrad<decltype(load), decltype(load_d), decltype(store),
-                                           float>(cuda_stream, load, load_d, store, rows, cols);
+    int grid = rows / 4;
+    dim3 block(128);
+
+    if (output.dtype() == torch::kFloat32) {
+        fastfold_softmax_scale_mask_grad_fp32<<<grid, block>>>(
+            (float *)d_output.data_ptr(), (float *)output.data_ptr(),
+            (float *)grad_input.data_ptr(), (float *)mask.data_ptr(), rows, cols, scale, head);
+    } else {
+        fastfold_softmax_scale_mask_grad_bfp16<<<grid, block>>>(
+            (at::BFloat16 *)d_output.data_ptr(), (at::BFloat16 *)output.data_ptr(),
+            (at::BFloat16 *)grad_input.data_ptr(), (at::BFloat16 *)mask.data_ptr(), rows, cols,
+            scale, head);
+    }
 
     return grad_input;
 }

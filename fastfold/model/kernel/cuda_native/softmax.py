@@ -14,7 +14,7 @@ class SoftmaxAffineFunction(torch.autograd.Function):
         input_ = input.contiguous()
         ctx.cols = input_.shape[-1]
         ctx.rows = reduce(mul, input.shape[:-1])
-        output = fastfold_softmax_cuda.forward_affine(input_, ctx.rows, ctx.cols)
+        output = fastfold_softmax_cuda.forward(input_, ctx.rows, ctx.cols)
         ctx.save_for_backward(output)
 
         return output
@@ -25,7 +25,7 @@ class SoftmaxAffineFunction(torch.autograd.Function):
         output = ctx.saved_tensors[0]
 
         grad_input = None
-        grad_input = fastfold_softmax_cuda.backward_affine(grad_output.contiguous(), output,
+        grad_input = fastfold_softmax_cuda.backward(grad_output.contiguous(), output,
                                                            ctx.rows, ctx.cols)
 
         return grad_input

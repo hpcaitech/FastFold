@@ -1,3 +1,5 @@
+// modified from https://github.com/NVIDIA/apex
+
 #include <ATen/ATen.h>
 
 #include "compat.h"
