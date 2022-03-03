@@ -79,6 +79,10 @@ If you want to benchmark with [OpenFold](https://github.com/aqlaboratory/openfol
 torchrun --nproc_per_node=1 perf.py --msa-length 128 --res-length 256 --openfold
 ```
 
+## Acknowledge
+
+The CUDA implementations of the LayerNorm and Softmax are modified from [OneFlow](https://github.com/Oneflow-Inc/oneflow). Thanks to OneFlow for the high performance CUDA implementation, we mainly add support of Bfloat16 precision.
+
 ## Cite us
 
 Cite this paper, if you use FastFold in your research publication.
