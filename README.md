@@ -2,9 +2,10 @@
 
 # FastFold
 
-![](https://img.shields.io/github/v/release/hpcaitech/FastFold)
-[![GitHub license](https://img.shields.io/github/license/hpcaitech/FastFold.svg)](https://github.com/hpcaitech/FastFold/blob/master/LICENSE)
+[![](https://img.shields.io/badge/Paper-PDF-green?style=flat&logo=arXiv&logoColor=green)](https://arxiv.org/abs/2203.00854)
 ![](https://img.shields.io/badge/Made%20with-ColossalAI-blueviolet?style=flat)
+![](https://img.shields.io/github/v/release/hpcaitech/FastFold)
+[![GitHub license](https://img.shields.io/github/license/hpcaitech/FastFold)](https://github.com/hpcaitech/FastFold/blob/main/LICENSE)
 
 Optimizing Protein Structure Prediction Model Training and Inference on GPU Clusters
 
@@ -83,4 +84,12 @@ torchrun --nproc_per_node=1 perf.py --msa-length 128 --res-length 256 --openfold
 Cite this paper, if you use FastFold in your research publication.
 
 ```
+@misc{cheng2022fastfold,
+      title={FastFold: Reducing AlphaFold Training Time from 11 Days to 67 Hours}, 
+      author={Shenggan Cheng and Ruidong Wu and Zhongming Yu and Binrui Li and Xiwen Zhang and Jian Peng and Yang You},
+      year={2022},
+      eprint={2203.00854},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG}
+}
 ```
