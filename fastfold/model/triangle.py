@@ -65,7 +65,8 @@ class TriangleMultiplicationOutgoing(nn.Module):
                                          g,
                                          dropout_mask,
                                          Z_raw,
-                                         prob=self.p_drop)
+                                         prob=self.p_drop,
+                                         training=self.training)
 
 
 class TriangleMultiplicationIncoming(nn.Module):
@@ -103,10 +104,7 @@ class TriangleMultiplicationIncoming(nn.Module):
 
         left_proj_act = gather_async_opp(left_proj_act, work, dim=2)
 
-        p = torch.matmul(
-            permute_final_dims(left_proj_act, (2, 1, 0)),
-            right_proj_act
-        )
+        p = torch.matmul(permute_final_dims(left_proj_act, (2, 1, 0)), right_proj_act)
         ab = permute_final_dims(p, (1, 2, 0))
 
         # ab = torch.einsum('bkid,bkjd->bijd', left_proj_act, right_proj_act)
@@ -117,7 +115,8 @@ class TriangleMultiplicationIncoming(nn.Module):
                                          g,
                                          dropout_mask,
                                          Z_raw,
-                                         prob=self.p_drop)
+                                         prob=self.p_drop,
+                                         training=self.training)
 
 
 class TriangleAttentionStartingNode(nn.Module):
@@ -149,14 +148,19 @@ class TriangleAttentionStartingNode(nn.Module):
         b = self.linear_b(Z)
         # b = torch.einsum('bqkc,ch->bhqk', Z, self.linear_b_weights)
         b, work = gather_async(b, dim=1)
-    
+
         # b = rearrange(b, 'b q k h -> b h q k')
 
         # padding_bias = (1e9 * (Z_mask - 1.))[:, :, None, None, :]
         Z = self.attention(Z, Z_mask, (b, work))
 
         dropout_mask = torch.ones_like(Z[:, 0:1, :, :], device=Z.device, dtype=Z.dtype)
-        return bias_dropout_add(Z, self.out_bias, dropout_mask, Z_raw, prob=self.p_drop)
+        return bias_dropout_add(Z,
+                                self.out_bias,
+                                dropout_mask,
+                                Z_raw,
+                                prob=self.p_drop,
+                                training=self.training)
 
 
 class TriangleAttentionEndingNode(nn.Module):
@@ -197,7 +201,12 @@ class TriangleAttentionEndingNode(nn.Module):
 
         Z = Z.transpose(-2, -3)
         dropout_mask = torch.ones_like(Z[:, :, 0:1, :], device=Z.device, dtype=Z.dtype)
-        return bias_dropout_add(Z, self.out_bias, dropout_mask, Z_raw, prob=self.p_drop)
+        return bias_dropout_add(Z,
+                                self.out_bias,
+                                dropout_mask,
+                                Z_raw,
+                                prob=self.p_drop,
+                                training=self.training)
 
 
 class PairStack(nn.Module):
@@ -209,10 +218,20 @@ class PairStack(nn.Module):
         self.n_head = 4
         self.hidden_c = int(d_pair / self.n_head)
 
-        self.TriangleMultiplicationOutgoing = TriangleMultiplicationOutgoing(d_pair, p_drop=p_drop, c=d_pair)
-        self.TriangleMultiplicationIncoming = TriangleMultiplicationIncoming(d_pair, p_drop=p_drop, c=d_pair)
-        self.TriangleAttentionStartingNode = TriangleAttentionStartingNode(d_pair, p_drop=p_drop, c=self.hidden_c, n_head=self.n_head)
-        self.TriangleAttentionEndingNode = TriangleAttentionEndingNode(d_pair, p_drop=p_drop, c=self.hidden_c, n_head=self.n_head)
+        self.TriangleMultiplicationOutgoing = TriangleMultiplicationOutgoing(d_pair,
+                                                                             p_drop=p_drop,
+                                                                             c=d_pair)
+        self.TriangleMultiplicationIncoming = TriangleMultiplicationIncoming(d_pair,
+                                                                             p_drop=p_drop,
+                                                                             c=d_pair)
+        self.TriangleAttentionStartingNode = TriangleAttentionStartingNode(d_pair,
+                                                                           p_drop=p_drop,
+                                                                           c=self.hidden_c,
+                                                                           n_head=self.n_head)
+        self.TriangleAttentionEndingNode = TriangleAttentionEndingNode(d_pair,
+                                                                       p_drop=p_drop,
+                                                                       c=self.hidden_c,
+                                                                       n_head=self.n_head)
         self.PairTransition = Transition(d=d_pair)
 
     def forward(self, pair, pair_mask):

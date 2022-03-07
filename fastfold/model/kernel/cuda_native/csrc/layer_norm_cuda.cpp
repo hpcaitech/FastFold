@@ -1,4 +1,5 @@
 #include <torch/extension.h>
+#include <c10/cuda/CUDAGuard.h>
 
 #include <cassert>
 #include <vector>
@@ -74,6 +75,8 @@ std::vector<at::Tensor> layer_norm_affine(at::Tensor input, at::IntArrayRef norm
     int n1, n2;
     check_args(input, normalized_shape, gamma, beta, n1, n2);
 
+    const at::cuda::OptionalCUDAGuard device_guard(device_of(input));
+
     at::Tensor output = at::empty_like(input, gamma.options().dtype(gamma.scalar_type()));
     at::Tensor mean = at::empty({n1}, input.options().dtype(at::ScalarType::Float));
     at::Tensor invvar = at::empty_like(mean);
@@ -103,6 +106,8 @@ std::vector<at::Tensor> layer_norm_gradient_affine(at::Tensor dout, at::Tensor m
     CHECK_INPUT(beta);
     int n1, n2;
     check_args(input, normalized_shape, gamma, beta, n1, n2);
+
+    const at::cuda::OptionalCUDAGuard device_guard(device_of(input));
 
     at::Tensor grad_input = at::empty_like(input);
     at::Tensor grad_gamma = at::empty_like(gamma);
