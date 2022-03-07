@@ -4,7 +4,7 @@ import torch
 import torch.distributed as dist
 from torch import Tensor
 
-from .core import (get_tensor_model_parallel_group, get_tensor_model_parallel_src_rank,
+from .core import (get_tensor_model_parallel_group, get_tensor_model_parallel_rank,
                    get_tensor_model_parallel_world_size)
 from .core import ensure_divisibility
 
@@ -33,7 +33,7 @@ def _split(tensor: Tensor, dim: int = -1) -> Tensor:
     split_size = divide(tensor.shape[dim], get_tensor_model_parallel_world_size())
     tensor_list = torch.split(tensor, split_size, dim=dim)
 
-    output = tensor_list[get_tensor_model_parallel_src_rank()].contiguous()
+    output = tensor_list[get_tensor_model_parallel_rank()].contiguous()
 
     return output
 
@@ -49,7 +49,7 @@ def _gather(tensor: Tensor, dim: int = -1) -> Tensor:
         tensor_list = output.chunk(get_tensor_model_parallel_world_size(), dim=1)
         dist.all_gather(list(tensor_list), tensor, group=get_tensor_model_parallel_group(), async_op=False)
     else:
-        tensor_list = [torch.ones_like(tensor) for _ in range(get_tensor_model_parallel_world_size())]
+        tensor_list = [torch.empty_like(tensor) for _ in range(get_tensor_model_parallel_world_size())]
         dist.all_gather(tensor_list, tensor, group=get_tensor_model_parallel_group(), async_op=False)
         output = torch.cat(tensor_list, dim=dim)
 
