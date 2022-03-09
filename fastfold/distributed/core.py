@@ -74,6 +74,8 @@ def get_data_parallel_group():
 
 
 def get_tensor_model_parallel_world_size():
+    if not dap_is_initialized():
+        return 1
     """Return world size for the tensor model parallel group."""
     global _TENSOR_MODEL_PARALLEL_WORLD_SIZE
     if _TENSOR_MODEL_PARALLEL_WORLD_SIZE is not None:
@@ -82,6 +84,8 @@ def get_tensor_model_parallel_world_size():
 
 
 def get_tensor_model_parallel_rank():
+    if not dap_is_initialized():
+        return 0
     """Return my rank for the tensor model parallel group."""
     global _TENSOR_MODEL_PARALLEL_RANK
     if _TENSOR_MODEL_PARALLEL_RANK is not None:
