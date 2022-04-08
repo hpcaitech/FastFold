@@ -57,6 +57,35 @@ torch.distributed.init_process_group(backend='nccl', init_method='env://')
 init_dap(args.dap_size)
 ```
 
+### Inference
+
+You can use FastFold alongwith OpenFold with `inject_openfold`. This will replace the evoformer in OpenFold with the high performance evoformer from FastFold.
+
+```python
+from fastfold.utils import inject_openfold
+
+model = AlphaFold(config)
+import_jax_weights_(model, args.param_path, version=args.model_name)
+
+model = inject_openfold(model)
+```
+
+For Dynamic Axial Parallelism, you can refer to `./inference.py`. Here is an example of 2 GPUs parallel inference:
+
+```shell
+torchrun --nproc_per_node=2 inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
+    --uniref90_database_path data/uniref90/uniref90.fasta \
+    --mgnify_database_path data/mgnify/mgy_clusters_2018_12.fa \
+    --pdb70_database_path data/pdb70/pdb70 \
+    --uniclust30_database_path data/uniclust30/uniclust30_2018_08/uniclust30_2018_08 \
+    --output_dir ./ \
+    --bfd_database_path data/bfd/bfd_metaclust_clu_complete_id30_c90_final_seq.sorted_opt \
+    --jackhmmer_binary_path lib/conda/envs/openfold_venv/bin/jackhmmer \
+    --hhblits_binary_path lib/conda/envs/openfold_venv/bin/hhblits \
+    --hhsearch_binary_path lib/conda/envs/openfold_venv/bin/hhsearch \
+    --kalign_binary_path lib/conda/envs/openfold_venv/bin/kalign
+```
+
 ## Performance Benchmark
 
 We have included a performance benchmark script in `./benchmark`. You can benchmark the performance of Evoformer using different settings.

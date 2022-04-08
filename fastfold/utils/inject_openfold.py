@@ -6,6 +6,7 @@ import torch.nn as nn
 from fastfold.model import MSAStack, OutProductMean, PairStack
 from fastfold.distributed.comm_async import All_to_All_Async, All_to_All_Async_Opp
 from fastfold.distributed.comm import gather, scatter
+from fastfold.distributed import get_tensor_model_parallel_world_size
 
 
 class EvoformerBlock(nn.Module):
@@ -30,9 +31,17 @@ class EvoformerBlock(nn.Module):
         _mask_trans: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
 
+        dap_size = get_tensor_model_parallel_world_size()
+
+        seq_length = pair_mask.size(-1)
+        padding_size = (int(seq_length / dap_size) + 1) * dap_size - seq_length
+
         if self.first_block:
             m = m.unsqueeze(0)
             z = z.unsqueeze(0)
+
+            m = torch.nn.functional.pad(m, (0, 0, 0, padding_size))
+            z = torch.nn.functional.pad(z, (0, 0, 0, padding_size, 0, padding_size))
 
             m = scatter(m, dim=1)
             z = scatter(z, dim=1)
@@ -40,7 +49,11 @@ class EvoformerBlock(nn.Module):
         msa_mask = msa_mask.unsqueeze(0)
         pair_mask = pair_mask.unsqueeze(0)
 
+        msa_mask = torch.nn.functional.pad(msa_mask, (0, padding_size))
+        pair_mask = torch.nn.functional.pad(pair_mask, (0, padding_size, 0, padding_size))
+
         m = self.msa_stack(m, z, msa_mask)
+
         z = z + self.communication(m, msa_mask)
         m, work = All_to_All_Async.apply(m, 1, 2)
         z = self.pair_stack(z, pair_mask)
@@ -52,6 +65,9 @@ class EvoformerBlock(nn.Module):
 
             m = gather(m, dim=0)
             z = gather(z, dim=0)
+
+            m = m[:, :-padding_size, :]
+            z = z[:-padding_size, :-padding_size, :]
 
         return m, z
 

@@ -314,7 +314,7 @@ __global__ void fastfold_softmax_scale_mask_fp32(float *input, float *mask, floa
     #pragma unroll
         for (int i = 0; i < cols_this_thread; i++) {
             if (mask_ptr[lane_id * cols_per_thread + i] == 0) {
-                buf[i] = -1 * CUDART_INF_F;
+                buf[i] = -1 * 1e9;
             } else {
                 buf[i] = row_input[lane_id * cols_per_thread + i] * scale;
             }
@@ -373,7 +373,7 @@ __global__ void fastfold_softmax_scale_mask_bfp16(at::BFloat16 *input, at::BFloa
     #pragma unroll
         for (int i = 0; i < cols_this_thread; i++) {
             if (mask_ptr[lane_id * cols_per_thread + i] == 0) {
-                buf[i] = -1 * CUDART_INF_F;
+                buf[i] = -1 * 10e9;
             } else {
                 buf[i] = static_cast<float>(row_input[lane_id * cols_per_thread + i]) * scale;
             }
@@ -601,7 +601,7 @@ __global__ void fastfold_softmax_scale_mask_bias_fp32(float *input, float *mask,
     #pragma unroll
         for (int i = 0; i < cols_this_thread; i++) {
             if (mask_ptr[lane_id * cols_per_thread + i] == 0) {
-                buf[i] = -1 * CUDART_INF_F;
+                buf[i] = -1 * 10e9;
             } else {
                 buf[i] = row_input[lane_id * cols_per_thread + i] * scale +
                         bias_ptr[lane_id * cols_per_thread + i];
@@ -662,7 +662,7 @@ __global__ void fastfold_softmax_scale_mask_bias_bfp16(at::BFloat16 *input, at::
     #pragma unroll
         for (int i = 0; i < cols_this_thread; i++) {
             if (mask_ptr[lane_id * cols_per_thread + i] == 0) {
-                buf[i] = -1 * CUDART_INF_F;
+                buf[i] = -1 * 10e9;
             } else {
                 buf[i] = static_cast<float>(row_input[lane_id * cols_per_thread + i]) * scale;
                 buf[i] += static_cast<float>(bias_ptr[lane_id * cols_per_thread + i]);
