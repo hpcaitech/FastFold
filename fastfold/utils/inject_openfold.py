@@ -3,10 +3,12 @@ from typing import Tuple, Optional
 import torch
 import torch.nn as nn
 
+from colossalai.context.parallel_mode import ParallelMode
+from colossalai.core import global_context as gpc
+
 from fastfold.model import MSAStack, OutProductMean, PairStack
 from fastfold.distributed.comm_async import All_to_All_Async, All_to_All_Async_Opp
 from fastfold.distributed.comm import gather, scatter
-from fastfold.distributed import get_tensor_model_parallel_world_size
 
 
 class EvoformerBlock(nn.Module):
@@ -31,7 +33,7 @@ class EvoformerBlock(nn.Module):
         _mask_trans: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
 
-        dap_size = get_tensor_model_parallel_world_size()
+        dap_size = gpc.get_world_size(ParallelMode.TENSOR)
 
         seq_length = pair_mask.size(-1)
         padding_size = (int(seq_length / dap_size) + 1) * dap_size - seq_length

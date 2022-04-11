@@ -41,9 +41,7 @@ def main(args):
 
     if local_rank != -1:
         distributed_inference_ = True
-        torch.cuda.set_device(local_rank)
-        torch.distributed.init_process_group(backend='nccl', init_method='env://')
-        fastfold.distributed.init_dap(torch.distributed.get_world_size())
+        fastfold.distributed.init_dap()
     else:
         distributed_inference_ = False
 

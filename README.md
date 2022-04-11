@@ -48,12 +48,11 @@ from fastfold.model import Evoformer
 evoformer_layer = Evoformer()
 ```
 
-If you want to use Dynamic Axial Parallelism, add a line of initialize with `fastfold.distributed.init_dap` after `torch.distributed.init_process_group`.
+If you want to use Dynamic Axial Parallelism, add a line of initialize with `fastfold.distributed.init_dap`.
 
 ```python
 from fastfold.distributed import init_dap
 
-torch.distributed.init_process_group(backend='nccl', init_method='env://')
 init_dap(args.dap_size)
 ```
 
