@@ -5,21 +5,23 @@ import torch
 import torch.distributed as dist
 from torch import Tensor
 
-from .core import get_tensor_model_parallel_world_size, get_tensor_model_parallel_group
+from colossalai.context.parallel_mode import ParallelMode
+from colossalai.core import global_context as gpc
+
 from .comm import _split, divide
 
 
 def _gather_async(tensor: Tensor, dim: int = -1) -> Tensor:
-    if get_tensor_model_parallel_world_size() == 1:
+    if gpc.get_world_size(ParallelMode.TENSOR) == 1:
         return tensor, None
 
     output_shape = list(tensor.shape)
-    output_shape[1] *= get_tensor_model_parallel_world_size()
+    output_shape[1] *= gpc.get_world_size(ParallelMode.TENSOR)
     output = torch.empty(output_shape, dtype=tensor.dtype, device=tensor.device)
-    tensor_list = output.chunk(get_tensor_model_parallel_world_size(), dim=1)
+    tensor_list = output.chunk(gpc.get_world_size(ParallelMode.TENSOR), dim=1)
     work = dist.all_gather(list(tensor_list),
                            tensor,
-                           group=get_tensor_model_parallel_group(),
+                           group=gpc.get_group(ParallelMode.TENSOR),
                            async_op=True)
 
     return output, work
@@ -45,13 +47,13 @@ class GatherAsyncOpp(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx: "GatherAsyncOpp", input: Tensor) -> Tensor:
-        mp_size = get_tensor_model_parallel_world_size()
+        mp_size = gpc.get_world_size(ParallelMode.TENSOR)
         output = rearrange(input, 'n (x h) w c -> n h (x w) c', x=mp_size)
         return output
 
     @staticmethod
     def backward(ctx: "GatherAsyncOpp", grad_output: Tensor) -> Tuple[Tensor]:
-        mp_size = get_tensor_model_parallel_world_size()
+        mp_size = gpc.get_world_size(ParallelMode.TENSOR)
         n, h, w, c = grad_output.shape
         return grad_output.resize_(n, h * mp_size, int(w / mp_size), c)
 
@@ -66,28 +68,28 @@ class GatherAsync(torch.autograd.Function):
     @staticmethod
     def backward(ctx: "GatherAsync", grad_output: Tensor, grad_work=None) -> Tuple[Tensor]:
         if ctx.dim == 2:
-            mp_size = get_tensor_model_parallel_world_size()
+            mp_size = gpc.get_world_size(ParallelMode.TENSOR)
             n, h, w, c = grad_output.shape
             grad_output.resize_(n, int(h / mp_size), w * mp_size, c)
         return _split(grad_output, dim=ctx.dim), None
 
 
 def _all_to_all_async(tensor: Tensor, in_dim: int = -1, out_dim: int = -1) -> Tensor:
-    if get_tensor_model_parallel_world_size() == 1:
+    if gpc.get_world_size(ParallelMode.TENSOR) == 1:
         return tensor, None
 
-    split_size = divide(tensor.shape[in_dim], get_tensor_model_parallel_world_size())
+    split_size = divide(tensor.shape[in_dim], gpc.get_world_size(ParallelMode.TENSOR))
     input_tensor_list = torch.split(tensor, split_size, dim=in_dim)
 
     input_tensor_list = [tensor_.contiguous() for tensor_ in input_tensor_list]
 
     output_shape = list(input_tensor_list[0].shape)
-    output_shape[1] *= get_tensor_model_parallel_world_size()
+    output_shape[1] *= gpc.get_world_size(ParallelMode.TENSOR)
     output = torch.empty(output_shape, dtype=tensor.dtype, device=tensor.device)
-    output_tensor_list = output.chunk(get_tensor_model_parallel_world_size(), dim=1)
+    output_tensor_list = output.chunk(gpc.get_world_size(ParallelMode.TENSOR), dim=1)
     work = dist.all_to_all(list(output_tensor_list),
                            input_tensor_list,
-                           group=get_tensor_model_parallel_group(),
+                           group=gpc.get_group(ParallelMode.TENSOR),
                            async_op=True)
 
     return output, work
@@ -114,7 +116,7 @@ class All_to_All_Async(torch.autograd.Function):
             WORLD_WORK_ALL2ALL.wait()
         WORLD_WORK_ALL2ALL = None
         if ctx.in_dim == 2:
-            mp_size = get_tensor_model_parallel_world_size()
+            mp_size = gpc.get_world_size(ParallelMode.TENSOR)
             grad_output = rearrange(grad_output, 'n (x h) w c -> n h (x w) c', x=mp_size)
         return grad_output, None, None
 
@@ -132,7 +134,7 @@ class All_to_All_Async_Opp(torch.autograd.Function):
         if work:
             work.wait()
         if out_dim == 2:
-            mp_size = get_tensor_model_parallel_world_size()
+            mp_size = gpc.get_world_size(ParallelMode.TENSOR)
             output = rearrange(output, 'n (x h) w c -> n h (x w) c', x=mp_size)
         return output
 

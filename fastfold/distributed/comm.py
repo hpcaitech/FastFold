@@ -4,8 +4,9 @@ import torch
 import torch.distributed as dist
 from torch import Tensor
 
-from .core import (get_tensor_model_parallel_group, get_tensor_model_parallel_rank,
-                   get_tensor_model_parallel_world_size)
+from colossalai.context.parallel_mode import ParallelMode
+from colossalai.core import global_context as gpc
+
 from .core import ensure_divisibility
 
 
@@ -15,42 +16,50 @@ def divide(numerator, denominator):
 
 
 def _reduce(tensor: Tensor) -> Tensor:
-    if get_tensor_model_parallel_world_size() == 1:
+    if gpc.get_world_size(ParallelMode.TENSOR) == 1:
         return tensor
 
     dist.all_reduce(tensor,
                     op=dist.ReduceOp.SUM,
-                    group=get_tensor_model_parallel_group(),
+                    group=gpc.get_group(ParallelMode.TENSOR),
                     async_op=False)
 
     return tensor
 
 
 def _split(tensor: Tensor, dim: int = -1) -> Tensor:
-    if get_tensor_model_parallel_world_size() == 1:
+    if gpc.get_world_size(ParallelMode.TENSOR) == 1:
         return tensor
 
-    split_size = divide(tensor.shape[dim], get_tensor_model_parallel_world_size())
+    split_size = divide(tensor.shape[dim], gpc.get_world_size(ParallelMode.TENSOR))
     tensor_list = torch.split(tensor, split_size, dim=dim)
 
-    output = tensor_list[get_tensor_model_parallel_rank()].contiguous()
+    output = tensor_list[gpc.get_local_rank(ParallelMode.TENSOR)].contiguous()
 
     return output
 
 
 def _gather(tensor: Tensor, dim: int = -1) -> Tensor:
-    if get_tensor_model_parallel_world_size() == 1:
+    if gpc.get_world_size(ParallelMode.TENSOR) == 1:
         return tensor
 
     if dim == 1:
         output_shape = list(tensor.shape)
-        output_shape[1] *= get_tensor_model_parallel_world_size()
+        output_shape[1] *= gpc.get_world_size(ParallelMode.TENSOR)
         output = torch.empty(output_shape, dtype=tensor.dtype, device=tensor.device)
-        tensor_list = output.chunk(get_tensor_model_parallel_world_size(), dim=1)
-        dist.all_gather(list(tensor_list), tensor, group=get_tensor_model_parallel_group(), async_op=False)
+        tensor_list = output.chunk(gpc.get_world_size(ParallelMode.TENSOR), dim=1)
+        dist.all_gather(list(tensor_list),
+                        tensor,
+                        group=gpc.get_group(ParallelMode.TENSOR),
+                        async_op=False)
     else:
-        tensor_list = [torch.empty_like(tensor) for _ in range(get_tensor_model_parallel_world_size())]
-        dist.all_gather(tensor_list, tensor, group=get_tensor_model_parallel_group(), async_op=False)
+        tensor_list = [
+            torch.empty_like(tensor) for _ in range(gpc.get_world_size(ParallelMode.TENSOR))
+        ]
+        dist.all_gather(tensor_list,
+                        tensor,
+                        group=gpc.get_group(ParallelMode.TENSOR),
+                        async_op=False)
         output = torch.cat(tensor_list, dim=dim)
 
     return output
@@ -135,28 +144,28 @@ class Gather(torch.autograd.Function):
 
 
 def _all_to_all(tensor: Tensor, in_dim: int = -1, out_dim: int = -1) -> Tensor:
-    if get_tensor_model_parallel_world_size() == 1:
+    if gpc.get_world_size(ParallelMode.TENSOR) == 1:
         return tensor
 
-    split_size = divide(tensor.shape[in_dim], get_tensor_model_parallel_world_size())
+    split_size = divide(tensor.shape[in_dim], gpc.get_world_size(ParallelMode.TENSOR))
     input_tensor_list = torch.split(tensor, split_size, dim=in_dim)
 
     input_tensor_list = [tensor_.contiguous() for tensor_ in input_tensor_list]
     if out_dim == 1:
         output_shape = list(input_tensor_list[0].shape)
-        output_shape[1] *= get_tensor_model_parallel_world_size()
+        output_shape[1] *= gpc.get_world_size(ParallelMode.TENSOR)
         output = torch.empty(output_shape, dtype=tensor.dtype, device=tensor.device)
-        output_tensor_list = output.chunk(get_tensor_model_parallel_world_size(), dim=1)
+        output_tensor_list = output.chunk(gpc.get_world_size(ParallelMode.TENSOR), dim=1)
         dist.all_to_all(list(output_tensor_list),
                         input_tensor_list,
-                        group=get_tensor_model_parallel_group(),
+                        group=gpc.get_group(ParallelMode.TENSOR),
                         async_op=False)
     else:
         output_tensor_list = [torch.ones_like(tensor_) for tensor_ in input_tensor_list]
 
         dist.all_to_all(output_tensor_list,
                         input_tensor_list,
-                        group=get_tensor_model_parallel_group(),
+                        group=gpc.get_group(ParallelMode.TENSOR),
                         async_op=False)
 
         output = torch.cat(output_tensor_list, dim=out_dim)
