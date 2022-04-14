@@ -93,10 +93,10 @@ else:
         return CUDAExtension(
             name=name,
             sources=[
-                os.path.join('fastfold/model/kernel/cuda_native/csrc', path) for path in sources
+                os.path.join('fastfold/model/fastnn/kernel/cuda_native/csrc', path) for path in sources
             ],
             include_dirs=[
-                os.path.join(this_dir, 'fastfold/model/kernel/cuda_native/csrc/include')
+                os.path.join(this_dir, 'fastfold/model/fastnn/kernel/cuda_native/csrc/include')
             ],
             extra_compile_args={
                 'cxx': ['-O3'] + version_dependent_macros,
@@ -138,7 +138,7 @@ setup(
     description=
     'Optimizing Protein Structure Prediction Model Training and Inference on GPU Clusters',
     ext_modules=ext_modules,
-    package_data={'fastfold': ['model/kernel/cuda_native/csrc/*']},
+    package_data={'fastfold': ['model/fastnn/kernel/cuda_native/csrc/*']},
     cmdclass={'build_ext': BuildExtension} if ext_modules else {},
     install_requires=['einops', 'colossalai'],
 )

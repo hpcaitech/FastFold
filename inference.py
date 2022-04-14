@@ -18,38 +18,70 @@ import os
 import random
 import sys
 import time
+from datetime import date
 
 import numpy as np
 import torch
+from fastfold.model.hub import AlphaFold
 
 import fastfold
-import openfold.np.relax.relax as relax
-from fastfold.utils import inject_openfold
-from openfold.config import model_config
-from openfold.data import data_pipeline, feature_pipeline, templates
-from openfold.model.model import AlphaFold
-from openfold.model.torchscript import script_preset_
-from openfold.np import protein, residue_constants
-from openfold.utils.import_weights import import_jax_weights_
-from openfold.utils.tensor_utils import tensor_tree_map
-from scripts.utils import add_data_args
+import fastfold.relax.relax as relax
+from fastfold.common import protein, residue_constants
+from fastfold.config import model_config
+from fastfold.data import data_pipeline, feature_pipeline, templates
+from fastfold.utils import inject_fastnn
+from fastfold.utils.import_weights import import_jax_weights_
+from fastfold.utils.tensor_utils import tensor_tree_map
+
+
+def add_data_args(parser: argparse.ArgumentParser):
+    parser.add_argument(
+        '--uniref90_database_path',
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        '--mgnify_database_path',
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        '--pdb70_database_path',
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        '--uniclust30_database_path',
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        '--bfd_database_path',
+        type=str,
+        default=None,
+    )
+    parser.add_argument('--jackhmmer_binary_path', type=str, default='/usr/bin/jackhmmer')
+    parser.add_argument('--hhblits_binary_path', type=str, default='/usr/bin/hhblits')
+    parser.add_argument('--hhsearch_binary_path', type=str, default='/usr/bin/hhsearch')
+    parser.add_argument('--kalign_binary_path', type=str, default='/usr/bin/kalign')
+    parser.add_argument(
+        '--max_template_date',
+        type=str,
+        default=date.today().strftime("%Y-%m-%d"),
+    )
+    parser.add_argument('--obsolete_pdbs_path', type=str, default=None)
+    parser.add_argument('--release_dates_path', type=str, default=None)
 
 
 def main(args):
     # init distributed for Dynamic Axial Parallelism
-    local_rank = int(os.getenv('LOCAL_RANK', -1))
-
-    if local_rank != -1:
-        distributed_inference_ = True
-        fastfold.distributed.init_dap()
-    else:
-        distributed_inference_ = False
+    fastfold.distributed.init_dap()
 
     config = model_config(args.model_name)
     model = AlphaFold(config)
     import_jax_weights_(model, args.param_path, version=args.model_name)
 
-    model = inject_openfold(model)
+    model = inject_fastnn(model)
     model = model.eval()
     #script_preset_(model)
     model = model.cuda()
@@ -62,7 +94,12 @@ def main(args):
         release_dates_path=args.release_dates_path,
         obsolete_pdbs_path=args.obsolete_pdbs_path)
 
-    use_small_bfd = (args.bfd_database_path is None)
+    use_small_bfd = args.preset == 'reduced_dbs'  # (args.bfd_database_path is None)
+    if use_small_bfd:
+        assert args.bfd_database_path is not None
+    else:
+        assert args.bfd_database_path is not None
+        assert args.uniclust30_database_path is not None
 
     data_processor = data_pipeline.DataPipeline(template_featurizer=template_featurizer,)
 
@@ -87,7 +124,7 @@ def main(args):
 
     for tag, seq in zip(tags, seqs):
         batch = [None]
-        if (not distributed_inference_) or (torch.distributed.get_rank() == 0):
+        if torch.distributed.get_rank() == 0:
             fasta_path = os.path.join(args.output_dir, "tmp.fasta")
             with open(fasta_path, "w") as fp:
                 fp.write(f">{tag}\n{seq}")
@@ -125,8 +162,8 @@ def main(args):
 
             batch = [processed_feature_dict]
 
-        if distributed_inference_:
-            torch.distributed.broadcast_object_list(batch, src=0)
+
+        torch.distributed.broadcast_object_list(batch, src=0)
         batch = batch[0]
 
         print("Executing model...")
@@ -138,10 +175,9 @@ def main(args):
             out = model(batch)
             print(f"Inference time: {time.perf_counter() - t}")
 
-        if distributed_inference_:
-            torch.distributed.barrier()
+        torch.distributed.barrier()
 
-        if (not distributed_inference_) or (torch.distributed.get_rank() == 0):
+        if torch.distributed.get_rank() == 0:
             # Toss out the recycling dimensions --- we don't need them anymore
             batch = tensor_tree_map(lambda x: np.array(x[..., -1].cpu()), batch)
             out = tensor_tree_map(lambda x: np.array(x.cpu()), out)
@@ -177,8 +213,7 @@ def main(args):
             with open(relaxed_output_path, 'w') as f:
                 f.write(relaxed_pdb_str)
 
-        if distributed_inference_:
-            torch.distributed.barrier()
+        torch.distributed.barrier()
 
 
 if __name__ == "__main__":
@@ -212,21 +247,20 @@ if __name__ == "__main__":
                         default=None,
                         help="""Path to model parameters. If None, parameters are selected
              automatically according to the model name from 
-             openfold/resources/params""")
+             ./data/params""")
     parser.add_argument("--cpus",
                         type=int,
                         default=12,
                         help="""Number of CPUs with which to run alignment tools""")
     parser.add_argument('--preset',
                         type=str,
-                        default='reduced_dbs',
+                        default='full_dbs',
                         choices=('reduced_dbs', 'full_dbs'))
     parser.add_argument('--data_random_seed', type=str, default=None)
     add_data_args(parser)
     args = parser.parse_args()
 
     if (args.param_path is None):
-        args.param_path = os.path.join("openfold", "resources", "params",
-                                       "params_" + args.model_name + ".npz")
+        args.param_path = os.path.join("data", "params", "params_" + args.model_name + ".npz")
 
     main(args)

@@ -3,10 +3,10 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from fastfold.model.kernel import LayerNorm
+from fastfold.model.fastnn.kernel import LayerNorm
 
-from fastfold.model.ops import Transition, SelfAttention
-from fastfold.model.kernel import bias_dropout_add
+from fastfold.model.fastnn.ops import Transition, SelfAttention
+from fastfold.model.fastnn.kernel import bias_dropout_add
 from fastfold.distributed import scatter, row_to_col
 from fastfold.distributed.comm_async import gather_async
 

@@ -1,3 +1,3 @@
-from .inject_openfold import inject_openfold
+from .inject_fastnn import inject_fastnn
 
-__all__ = ['inject_openfold']
+__all__ = ['inject_fastnn']

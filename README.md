@@ -41,10 +41,10 @@ python setup.py install
 
 ## Usage
 
-You can use `Evoformer` as `nn.Module` in your project after `from fastfold.model import Evoformer`:
+You can use `Evoformer` as `nn.Module` in your project after `from fastfold.model.fastnn import Evoformer`:
 
 ```python
-from fastfold.model import Evoformer
+from fastfold.model.fastnn import Evoformer
 evoformer_layer = Evoformer()
 ```
 
@@ -58,15 +58,15 @@ init_dap(args.dap_size)
 
 ### Inference
 
-You can use FastFold alongwith OpenFold with `inject_openfold`. This will replace the evoformer in OpenFold with the high performance evoformer from FastFold.
+You can use FastFold alongwith OpenFold with `inject_fastnn`. This will replace the evoformer in OpenFold with the high performance evoformer from FastFold.
 
 ```python
-from fastfold.utils import inject_openfold
+from fastfold.utils import inject_fastnn
 
 model = AlphaFold(config)
 import_jax_weights_(model, args.param_path, version=args.model_name)
 
-model = inject_openfold(model)
+model = inject_fastnn(model)
 ```
 
 For Dynamic Axial Parallelism, you can refer to `./inference.py`. Here is an example of 2 GPUs parallel inference:

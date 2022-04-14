@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 from fastfold.distributed import init_dap
-from fastfold.model import Evoformer
+from fastfold.model.fastnn import Evoformer
 
 
 def main():

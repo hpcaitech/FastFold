@@ -1,7 +1,7 @@
 import torch.nn as nn
 
 from fastfold.distributed.comm_async import All_to_All_Async, All_to_All_Async_Opp
-from fastfold.model import MSAStack, OutProductMean, PairStack
+from fastfold.model.fastnn import MSAStack, OutProductMean, PairStack
 
 
 class Evoformer(nn.Module):
