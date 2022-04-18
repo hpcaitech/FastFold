@@ -26,9 +26,9 @@ You will need Python 3.8 or later and [NVIDIA CUDA](https://developer.nvidia.com
 We highly recommend installing an Anaconda or Miniconda environment and install PyTorch with conda:
 
 ```
-conda create -n fastfold python=3.8
+conda env create --name=fastfold -f environment.yml
 conda activate fastfold
-conda install pytorch torchvision torchaudio cudatoolkit=11.3 -c pytorch
+bash scripts/patch_openmm.sh
 ```
 
 You can get the FastFold source and install it with setuptools:
@@ -58,7 +58,7 @@ init_dap(args.dap_size)
 
 ### Inference
 
-You can use FastFold alongwith OpenFold with `inject_fastnn`. This will replace the evoformer in OpenFold with the high performance evoformer from FastFold.
+You can use FastFold with `inject_fastnn`. This will replace the evoformer from OpenFold with the high performance evoformer from FastFold.
 
 ```python
 from fastfold.utils import inject_fastnn
@@ -73,16 +73,16 @@ For Dynamic Axial Parallelism, you can refer to `./inference.py`. Here is an exa
 
 ```shell
 torchrun --nproc_per_node=2 inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
+    --output_dir ./ \
     --uniref90_database_path data/uniref90/uniref90.fasta \
     --mgnify_database_path data/mgnify/mgy_clusters_2018_12.fa \
     --pdb70_database_path data/pdb70/pdb70 \
     --uniclust30_database_path data/uniclust30/uniclust30_2018_08/uniclust30_2018_08 \
-    --output_dir ./ \
     --bfd_database_path data/bfd/bfd_metaclust_clu_complete_id30_c90_final_seq.sorted_opt \
-    --jackhmmer_binary_path lib/conda/envs/openfold_venv/bin/jackhmmer \
-    --hhblits_binary_path lib/conda/envs/openfold_venv/bin/hhblits \
-    --hhsearch_binary_path lib/conda/envs/openfold_venv/bin/hhsearch \
-    --kalign_binary_path lib/conda/envs/openfold_venv/bin/kalign
+    --jackhmmer_binary_path `which jackhmmer` \
+    --hhblits_binary_path `which hhblits` \
+    --hhsearch_binary_path `which hhsearch` \
+    --kalign_binary_path `which kalign`
 ```
 
 ## Performance Benchmark
