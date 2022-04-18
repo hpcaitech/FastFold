@@ -2,12 +2,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
-from fastfold.model.kernel import scale_mask_softmax, scale_mask_bias_softmax
-from fastfold.model.kernel import LayerNorm
+from fastfold.model.fastnn.kernel import scale_mask_softmax, scale_mask_bias_softmax
+from fastfold.model.fastnn.kernel import LayerNorm
 
 from .initializer import glorot_uniform_af
 
-from fastfold.model.kernel import bias_sigmod_ele
+from fastfold.model.fastnn.kernel import bias_sigmod_ele
 from fastfold.distributed import gather, scatter
 from fastfold.distributed.comm_async import gather_async, gather_async_opp
 

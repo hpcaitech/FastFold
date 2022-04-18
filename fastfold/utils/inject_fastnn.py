@@ -6,7 +6,7 @@ import torch.nn as nn
 from colossalai.context.parallel_mode import ParallelMode
 from colossalai.core import global_context as gpc
 
-from fastfold.model import MSAStack, OutProductMean, PairStack
+from fastfold.model.fastnn import MSAStack, OutProductMean, PairStack
 from fastfold.distributed.comm_async import All_to_All_Async, All_to_All_Async_Opp
 from fastfold.distributed.comm import gather, scatter
 
@@ -179,19 +179,19 @@ def copy_para(block_fast, block_ori):
     copy_transition(block_fast.pair_stack.PairTransition, block_ori.core.pair_transition)
 
 
-def inject_openfold(model):
+def inject_fastnn(model):
     with torch.no_grad():
         fastfold_blocks = nn.ModuleList()
-        for block_id, openfold_block in enumerate(model.evoformer.blocks):
-            c_m = openfold_block.msa_att_row.c_in
-            c_z = openfold_block.msa_att_row.c_z
+        for block_id, ori_block in enumerate(model.evoformer.blocks):
+            c_m = ori_block.msa_att_row.c_in
+            c_z = ori_block.msa_att_row.c_z
             fastfold_block = EvoformerBlock(c_m=c_m,
                                             c_z=c_z,
                                             first_block=(block_id == 0),
                                             last_block=(block_id == len(model.evoformer.blocks) -
                                                         1))
 
-            copy_para(fastfold_block, openfold_block)
+            copy_para(fastfold_block, ori_block)
 
             fastfold_blocks.append(fastfold_block)
 

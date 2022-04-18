@@ -2,10 +2,10 @@ from fastfold.distributed.comm_async import gather_async
 
 import torch
 import torch.nn as nn
-from fastfold.model.kernel import LayerNorm
+from fastfold.model.fastnn.kernel import LayerNorm
 from fastfold.distributed.comm import col_to_row, row_to_col, scatter
-from fastfold.model.kernel import bias_dropout_add, bias_ele_dropout_residual
-from fastfold.model.ops import Linear, SelfAttention, Transition
+from fastfold.model.fastnn.kernel import bias_dropout_add, bias_ele_dropout_residual
+from fastfold.model.fastnn.ops import Linear, SelfAttention, Transition
 from fastfold.distributed.comm_async import gather_async_opp, gather_async
 
 
