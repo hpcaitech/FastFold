@@ -1,17 +1,3 @@
-# Copyright 2021 AlQuraishi Laboratory
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import copy
 import ml_collections as mlc
 
@@ -269,6 +255,7 @@ config = mlc.ConfigDict(
                 "clamp_prob": 0.9,
                 "max_distillation_msa_clusters": 1000,
                 "uniform_recycling": True,
+                "distillation_prob": 0.75,
             },
             "data_module": {
                 "use_small_bfd": False,
@@ -347,6 +334,7 @@ config = mlc.ConfigDict(
                 "eps": eps,  # 1e-6,
                 "enabled": templates_enabled,
                 "embed_angles": embed_template_torsion_angles,
+                "use_unit_vector": False,
             },
             "extra_msa": {
                 "extra_msa_embedder": {
