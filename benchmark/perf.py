@@ -35,19 +35,6 @@ def main():
 
     args = parser.parse_args()
 
-    args.distributed = False
-    if 'WORLD_SIZE' in os.environ:
-        args.distributed = int(os.environ['WORLD_SIZE']) > 1
-
-    args.local_rank = int(os.environ['LOCAL_RANK'])
-
-    torch.cuda.set_device(args.local_rank)
-    torch.distributed.init_process_group(backend='nccl', init_method='env://')
-    args.world_size = torch.distributed.get_world_size()
-    args.global_rank = torch.distributed.get_rank()
-    print(
-        'Training in distributed mode with multiple processes, 1 GPU per process. Process %d, total %d.'
-        % (args.global_rank, args.world_size))
     init_dap(args.dap_size)
 
     precision = torch.bfloat16
