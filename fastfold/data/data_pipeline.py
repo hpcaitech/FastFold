@@ -15,6 +15,8 @@
 
 import os
 import datetime
+import ray
+from time import time
 from multiprocessing import cpu_count
 from typing import Mapping, Optional, Sequence, Any
 
@@ -315,7 +317,7 @@ class AlignmentRunner:
         if(jackhmmer_binary_path is not None and 
             uniref90_database_path is not None
         ):
-            self.jackhmmer_uniref90_runner = jackhmmer.Jackhmmer(
+            self.jackhmmer_uniref90_runner = jackhmmer.Jackhmmer.remote(
                 binary_path=jackhmmer_binary_path,
                 database_path=uniref90_database_path,
                 n_cpu=no_cpus,
@@ -325,7 +327,7 @@ class AlignmentRunner:
         self.hhblits_bfd_uniclust_runner = None
         if(bfd_database_path is not None):
             if use_small_bfd:
-                self.jackhmmer_small_bfd_runner = jackhmmer.Jackhmmer(
+                self.jackhmmer_small_bfd_runner = jackhmmer.Jackhmmer.remote(
                     binary_path=jackhmmer_binary_path,
                     database_path=bfd_database_path,
                     n_cpu=no_cpus,
@@ -334,7 +336,7 @@ class AlignmentRunner:
                 dbs = [bfd_database_path]
                 if(uniclust30_database_path is not None):
                     dbs.append(uniclust30_database_path)
-                self.hhblits_bfd_uniclust_runner = hhblits.HHBlits(
+                self.hhblits_bfd_uniclust_runner = hhblits.HHBlits.remote(
                     binary_path=hhblits_binary_path,
                     databases=dbs,
                     n_cpu=no_cpus,
@@ -342,7 +344,7 @@ class AlignmentRunner:
 
         self.jackhmmer_mgnify_runner = None
         if(mgnify_database_path is not None):
-            self.jackhmmer_mgnify_runner = jackhmmer.Jackhmmer(
+            self.jackhmmer_mgnify_runner = jackhmmer.Jackhmmer.remote(
                 binary_path=jackhmmer_binary_path,
                 database_path=mgnify_database_path,
                 n_cpu=no_cpus,
@@ -350,7 +352,7 @@ class AlignmentRunner:
 
         self.hhsearch_pdb70_runner = None
         if(pdb70_database_path is not None):
-            self.hhsearch_pdb70_runner = hhsearch.HHSearch(
+            self.hhsearch_pdb70_runner = hhsearch.HHSearch.remote(
                 binary_path=hhsearch_binary_path,
                 databases=[pdb70_database_path],
                 n_cpu=no_cpus,
@@ -362,54 +364,89 @@ class AlignmentRunner:
         output_dir: str,
     ):
         """Runs alignment tools on a sequence"""
+        startDispatch = time()
+        # jackhmmer - uniref90 - dispatch query
         if(self.jackhmmer_uniref90_runner is not None):
-            jackhmmer_uniref90_result = self.jackhmmer_uniref90_runner.query(
+            jackhmmer_uniref90_result = self.jackhmmer_uniref90_runner.query.remote(
                 fasta_path
-            )[0]
+            )
+            print("jackhmmer_uniref90_runner dispatched")
+
+        # jackhmmer - mgnify - dispatch query:
+        if(self.jackhmmer_mgnify_runner is not None):
+            jackhmmer_mgnify_result = self.jackhmmer_mgnify_runner.query.remote(
+                fasta_path
+            )
+            print("jackhmmer_mgnify_runner dispatched")
+
+        # bfd - dispatch query
+        if(self.use_small_bfd and self.jackhmmer_small_bfd_runner is not None):
+            jackhmmer_small_bfd_result = self.jackhmmer_small_bfd_runner.query.remote(
+                fasta_path
+            )
+            print("jackhmmer_small_bfd_runner dispatched")
+        elif(self.hhblits_bfd_uniclust_runner is not None):
+            hhblits_bfd_uniclust_result = (
+                self.hhblits_bfd_uniclust_runner.query.remote(fasta_path)
+            )
+            print("hhblits_bfd_uniclust_runner dispatched")
+
+        endDispatch = time()
+        print("Time cost for dispatching DB queries: ", endDispatch - startDispatch)
+
+        print("Start retrieving results")
+        # jackhmmer - uniref90 - retrieve result
+        if(self.jackhmmer_uniref90_runner is not None): 
             uniref90_msa_as_a3m = parsers.convert_stockholm_to_a3m(
-                jackhmmer_uniref90_result["sto"], 
+                ray.get(jackhmmer_uniref90_result)[0]["sto"], 
                 max_sequences=self.uniref_max_hits
             )
             uniref90_out_path = os.path.join(output_dir, "uniref90_hits.a3m")
             with open(uniref90_out_path, "w") as f:
                 f.write(uniref90_msa_as_a3m)
+            print("jackhmmer_uniref90_result retrieved")
 
+            # jackhmmer - pdb70 - dispatch query
             if(self.hhsearch_pdb70_runner is not None):
-                hhsearch_result = self.hhsearch_pdb70_runner.query(
+                hhsearch_result = self.hhsearch_pdb70_runner.query.remote(
                     uniref90_msa_as_a3m
                 )
-                pdb70_out_path = os.path.join(output_dir, "pdb70_hits.hhr")
-                with open(pdb70_out_path, "w") as f:
-                    f.write(hhsearch_result)
+                print("hhsearch_pdb70_runner dispatched")
 
+
+        # jackhmmer - mgnify - retrieve result
         if(self.jackhmmer_mgnify_runner is not None):
-            jackhmmer_mgnify_result = self.jackhmmer_mgnify_runner.query(
-                fasta_path
-            )[0]
             mgnify_msa_as_a3m = parsers.convert_stockholm_to_a3m(
-                jackhmmer_mgnify_result["sto"], 
+                ray.get(jackhmmer_mgnify_result)[0]["sto"], 
                 max_sequences=self.mgnify_max_hits
             )
             mgnify_out_path = os.path.join(output_dir, "mgnify_hits.a3m")
             with open(mgnify_out_path, "w") as f:
                 f.write(mgnify_msa_as_a3m)
-
+            print("jackhmmer_mgnify_result retrieved")
+        
+        # bfd - retrieve result
         if(self.use_small_bfd and self.jackhmmer_small_bfd_runner is not None):
-            jackhmmer_small_bfd_result = self.jackhmmer_small_bfd_runner.query(
-                fasta_path
-            )[0]
             bfd_out_path = os.path.join(output_dir, "small_bfd_hits.sto")
             with open(bfd_out_path, "w") as f:
-                f.write(jackhmmer_small_bfd_result["sto"])
+                f.write(ray.get(jackhmmer_small_bfd_result)[0]["sto"])
+            print("jackhmmer_small_bfd_result retrieved")
         elif(self.hhblits_bfd_uniclust_runner is not None):
-            hhblits_bfd_uniclust_result = (
-                self.hhblits_bfd_uniclust_runner.query(fasta_path)
-            )
             if output_dir is not None:
                 bfd_out_path = os.path.join(output_dir, "bfd_uniclust_hits.a3m")
                 with open(bfd_out_path, "w") as f:
-                    f.write(hhblits_bfd_uniclust_result["a3m"])
+                    f.write(ray.get(hhblits_bfd_uniclust_result)["a3m"])
+            print("hhblits_bfd_uniclust_result retrieved")
 
+        # hackhmmer - pdb70 - retrieve result
+        if (self.jackhmmer_uniref90_runner is not None and self.hhsearch_pdb70_runner is not None):
+            pdb70_out_path = os.path.join(output_dir, "pdb70_hits.hhr")
+            with open(pdb70_out_path, "w") as f:
+                f.write(ray.get(hhsearch_result))
+            print("hhsearch_result retrieved")
+
+        endRetrieve = time()
+        print("Time cost for retrieving results: ", endRetrieve - endDispatch)
 
 class DataPipeline:
     """Assembles input features."""

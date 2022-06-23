@@ -18,11 +18,13 @@ import glob
 import logging
 import os
 import subprocess
+import ray
+from time import time
 from typing import Sequence
 
 from fastfold.data.tools import utils
 
-
+@ray.remote
 class HHSearch:
     """Python wrapper of the HHsearch binary."""
 
@@ -64,6 +66,7 @@ class HHSearch:
 
     def query(self, a3m: str) -> str:
         """Queries the database using HHsearch using a given a3m."""
+        startQuery = time()
         with utils.tmpdir_manager(base_dir="/tmp") as query_tmp_dir:
             input_path = os.path.join(query_tmp_dir, "query.a3m")
             hhr_path = os.path.join(query_tmp_dir, "output.hhr")
@@ -103,4 +106,6 @@ class HHSearch:
 
             with open(hhr_path) as f:
                 hhr = f.read()
+            endQuery = time()
+            print(f"HHSearch query took {endQuery - startQuery}s")
         return hhr
