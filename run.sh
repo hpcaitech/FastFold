@@ -1,4 +1,5 @@
 #!/bin/bash
+rm -r output
 
 torchrun --nproc_per_node=2 inference.py \
     test/input.fasta \
