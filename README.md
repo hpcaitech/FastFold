@@ -72,8 +72,9 @@ model = inject_fastnn(model)
 For Dynamic Axial Parallelism, you can refer to `./inference.py`. Here is an example of 2 GPUs parallel inference:
 
 ```shell
-torchrun --nproc_per_node=2 inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
+python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
     --output_dir ./ \
+    --gpus 2 \
     --uniref90_database_path data/uniref90/uniref90.fasta \
     --mgnify_database_path data/mgnify/mgy_clusters_2018_12.fa \
     --pdb70_database_path data/pdb70/pdb70 \
