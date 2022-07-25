@@ -5,11 +5,11 @@ from fastfold.model.fastnn.kernel import softmax
 def test_softmax():
 
     # [batch, dim]
-    test_shape = [[64, 64], [64, 128], [64, 129], [64, 1024]]
+    test_shape = [[64, 64], [64, 128], [64, 129], [64, 2000]]
     test_dtype = [torch.float32, torch.float16, torch.bfloat16]
     test_device = torch.device("cuda")
 
-    tolerance_eps = {torch.float32: 10e-5, torch.float16: 10e-2, torch.bfloat16: 10e-2}
+    tolerance_eps = {torch.float32: 10e-4, torch.float16: 10e-2, torch.bfloat16: 10e-2}
 
     for shape in test_shape:
         for dtype in test_dtype:
