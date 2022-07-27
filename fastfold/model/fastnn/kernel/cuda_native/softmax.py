@@ -31,18 +31,17 @@ class SoftmaxAffineFunction(torch.autograd.Function):
         return grad_input
 
 
-class FusedScaleMaskSoftmaxFunction(torch.autograd.Function):
+class FusedMaskSoftmaxFunction(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, input, mask, scale):
+    def forward(ctx, input, mask):
         input_ = input.contiguous()
         mask_ = mask.contiguous()
         ctx.cols = input_.shape[-1]
         ctx.rows = reduce(mul, input.shape[:-1])
-        output = fastfold_softmax_cuda.fused_scale_mask_softmax_forward(
-            input_, mask_, ctx.rows, ctx.cols, scale)
+        output = fastfold_softmax_cuda.fused_mask_softmax_forward(
+            input_, mask_, ctx.rows, ctx.cols)
         ctx.save_for_backward(output, mask_)
-        ctx.scale = scale
 
         return output
 
@@ -52,25 +51,24 @@ class FusedScaleMaskSoftmaxFunction(torch.autograd.Function):
         output, mask_ = ctx.saved_tensors
 
         grad_input = None
-        grad_input = fastfold_softmax_cuda.fused_scale_mask_softmax_backward(
-            grad_output.contiguous(), output, mask_, ctx.rows, ctx.cols, ctx.scale)
+        grad_input = fastfold_softmax_cuda.fused_mask_softmax_backward(
+            grad_output.contiguous(), output, mask_, ctx.rows, ctx.cols)
 
         return grad_input.contiguous(), None, None
 
 
-class FusedScaleMaskBiasSoftmaxFunction(torch.autograd.Function):
+class FusedMaskBiasSoftmaxFunction(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, input, mask, bias, scale):
+    def forward(ctx, input, mask, bias):
         input_ = input.contiguous()
         mask_ = mask.contiguous()
         bias_ = bias.contiguous()
         ctx.cols = input_.shape[-1]
         ctx.rows = reduce(mul, input.shape[:-1])
-        output = fastfold_softmax_cuda.fused_scale_mask_bias_softmax_forward(
-            input_, mask_, bias_, ctx.rows, ctx.cols, scale)
+        output = fastfold_softmax_cuda.fused_mask_bias_softmax_forward(
+            input_, mask_, bias_, ctx.rows, ctx.cols)
         ctx.save_for_backward(output, mask_, bias_)
-        ctx.scale = scale
 
         return output
 
@@ -80,8 +78,8 @@ class FusedScaleMaskBiasSoftmaxFunction(torch.autograd.Function):
         output, mask_, bias_ = ctx.saved_tensors
 
         grad_input = None
-        grad_input = fastfold_softmax_cuda.fused_scale_mask_bias_softmax_backward(
-            grad_output.contiguous(), output, mask_, bias_, ctx.rows, ctx.cols, ctx.scale)
+        grad_input = fastfold_softmax_cuda.fused_mask_bias_softmax_backward(
+            grad_output.contiguous(), output, mask_, bias_, ctx.rows, ctx.cols)
 
         grad_input = grad_input.contiguous()
 
@@ -91,5 +89,5 @@ class FusedScaleMaskBiasSoftmaxFunction(torch.autograd.Function):
 
 
 softmax = SoftmaxAffineFunction.apply
-scale_mask_softmax = FusedScaleMaskSoftmaxFunction.apply
-scale_mask_bias_softmax = FusedScaleMaskBiasSoftmaxFunction.apply
+mask_softmax = FusedMaskSoftmaxFunction.apply
+mask_bias_softmax = FusedMaskBiasSoftmaxFunction.apply
