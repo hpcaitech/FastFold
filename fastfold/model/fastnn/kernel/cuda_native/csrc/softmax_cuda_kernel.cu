@@ -561,7 +561,7 @@ __global__ void fastfold_softmax_scale_mask_grad(T *d_output, T *output, T *d_in
                 row_d_input[lane_id * cols_per_thread + i] =
                     static_cast<T>(scale * ((dy_buf[i] - warp_sum) * y_buf[i]));
             } else {
-                row_d_input = 0;
+                row_d_input[lane_id * cols_per_thread + i] = 0;
             }
         }
     }
