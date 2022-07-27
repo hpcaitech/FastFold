@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
-from fastfold.model.fastnn.kernel import scale_mask_softmax, scale_mask_bias_softmax
+from fastfold.model.fastnn.kernel import mask_softmax, mask_bias_softmax
 from fastfold.model.fastnn.kernel import LayerNorm
 
 from .initializer import glorot_uniform_af
@@ -160,26 +160,17 @@ class SelfAttention(nn.Module):
         qkv = self.to_qkv(in_data).chunk(3, dim=-1)
         q, k, v = map(lambda t: rearrange(t, 'b1 b2 n (h d) -> b1 b2 h n d', h=self.n_head), qkv)
 
-        # q = self.to_q(in_data)
-        # k = self.to_k(in_data)
-        # v = self.to_k(in_data)
-
-        # q, k, v = map(lambda t: rearrange(t, 'b1 b2 n (h d) -> b1 b2 h n d', h=self.n_head), [q, k, v])
-
-        # q = q * self.scaling
+        q = q * self.scaling
 
         logits = torch.matmul(q, k.transpose(-1, -2))
-        # logits += mask
 
         if nonbatched_bias is not None:
             # logits += nonbatched_bias.unsqueeze(1)
             bias = gather_async_opp(*nonbatched_bias, dim=1)
             bias = rearrange(bias, 'b q k h -> b h q k')
-            weights = scale_mask_bias_softmax(logits, mask, bias.unsqueeze(1), self.scaling)
+            weights = mask_bias_softmax(logits, mask, bias.unsqueeze(1))
         else:
-            weights = scale_mask_softmax(logits, mask, self.scaling)
-        # weights = torch.softmax(logits, dim=-1)
-        # weights = softmax(logits)
+            weights = mask_softmax(logits, mask)
 
         weighted_avg = torch.matmul(weights, v)
         weighted_avg = rearrange(weighted_avg, 'b1 b2 h n d -> b1 b2 n (h d)')
