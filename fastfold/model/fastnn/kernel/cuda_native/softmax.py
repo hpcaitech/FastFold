@@ -54,7 +54,7 @@ class FusedMaskSoftmaxFunction(torch.autograd.Function):
         grad_input = fastfold_softmax_cuda.fused_mask_softmax_backward(
             grad_output.contiguous(), output, mask_, ctx.rows, ctx.cols)
 
-        return grad_input.contiguous(), None, None
+        return grad_input.contiguous(), None
 
 
 class FusedMaskBiasSoftmaxFunction(torch.autograd.Function):
@@ -85,7 +85,7 @@ class FusedMaskBiasSoftmaxFunction(torch.autograd.Function):
 
         grad_bias = torch.sum(grad_input, dim=1, keepdim=True)
 
-        return grad_input.contiguous(), grad_bias, None, None
+        return grad_input.contiguous(), None, grad_bias
 
 
 softmax = SoftmaxAffineFunction.apply
