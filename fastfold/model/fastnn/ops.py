@@ -11,6 +11,14 @@ from fastfold.model.fastnn.kernel import bias_sigmod_ele
 from fastfold.distributed import gather, scatter
 from fastfold.distributed.comm_async import gather_async, gather_async_opp
 
+CHUNK_SIZE = None
+
+
+def set_chunk_size(chunk_size):
+    global CHUNK_SIZE
+    CHUNK_SIZE = chunk_size
+
+
 class DropoutRowwise(nn.Module):
 
     def __init__(self, p):
@@ -81,9 +89,23 @@ class OutProductMean(nn.Module):
         right_act_all = gather_async_opp(right_act_all, work, dim=2)
 
         right_act_all = M_mask * right_act_all
-        O = torch.einsum('bsid,bsje->bijde', left_act, right_act_all)
-        O = rearrange(O, 'b i j d e -> b i j (d e)')
-        Z = self.o_linear(O)
+
+        para_dim = left_act.shape[2]
+        chunk_size = CHUNK_SIZE
+        if CHUNK_SIZE == None:
+            chunk_size = para_dim
+
+        out = []
+        for ax in range(0, para_dim, chunk_size):
+            left_act_part = left_act[:, :, ax:ax + chunk_size, :]
+
+            O = torch.einsum('bsid,bsje->bijde', left_act_part, right_act_all)
+
+            O = rearrange(O, 'b i j d e -> b i j (d e)')
+
+            out.append(self.o_linear(O))
+
+        Z = torch.cat(out, dim=1)
 
         Z /= (1e-3 + norm)
 
@@ -157,27 +179,43 @@ class SelfAttention(nn.Module):
         :param nonbatched_bias: None or [batch_size1, n_head, len_q, len_kv]
         """
 
-        qkv = self.to_qkv(in_data).chunk(3, dim=-1)
-        q, k, v = map(lambda t: rearrange(t, 'b1 b2 n (h d) -> b1 b2 h n d', h=self.n_head), qkv)
-
-        q = q * self.scaling
-
-        logits = torch.matmul(q, k.transpose(-1, -2))
+        para_dim = in_data.shape[1]
+        chunk_size = CHUNK_SIZE
+        if CHUNK_SIZE == None:
+            chunk_size = para_dim
 
         if nonbatched_bias is not None:
             # logits += nonbatched_bias.unsqueeze(1)
             bias = gather_async_opp(*nonbatched_bias, dim=1)
             bias = rearrange(bias, 'b q k h -> b h q k')
-            weights = mask_bias_softmax(logits, mask, bias.unsqueeze(1))
-        else:
-            weights = mask_softmax(logits, mask)
 
-        weighted_avg = torch.matmul(weights, v)
-        weighted_avg = rearrange(weighted_avg, 'b1 b2 h n d -> b1 b2 n (h d)')
+        output = []
+        for ax in range(0, para_dim, chunk_size):
 
-        if self.gating:
-            gate_values = self.gating_linear(in_data)
-            weighted_avg = bias_sigmod_ele(gate_values, self.gating_bias, weighted_avg)
+            in_data_part = in_data[:, ax:ax + chunk_size, :, :]
+            mask_part = mask[:, ax:ax + chunk_size, :]
 
-        output = self.o_linear(weighted_avg)
+            qkv = self.to_qkv(in_data_part).chunk(3, dim=-1)
+            q, k, v = map(lambda t: rearrange(t, 'b1 b2 n (h d) -> b1 b2 h n d', h=self.n_head), qkv)
+
+            q = q * self.scaling
+
+            logits = torch.matmul(q, k.transpose(-1, -2))
+
+            if nonbatched_bias is not None:
+                weights = mask_bias_softmax(logits, mask_part, bias.unsqueeze(1))
+            else:
+                weights = mask_softmax(logits, mask)
+
+            weighted_avg = torch.matmul(weights, v)
+            weighted_avg = rearrange(weighted_avg, 'b1 b2 h n d -> b1 b2 n (h d)')
+
+            if self.gating:
+                gate_values = self.gating_linear(in_data_part)
+                weighted_avg = bias_sigmod_ele(gate_values, self.gating_bias, weighted_avg)
+
+            output.append(self.o_linear(weighted_avg))
+
+        output = torch.cat(output, dim=1)
+        
         return output

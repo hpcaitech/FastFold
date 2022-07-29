@@ -29,6 +29,7 @@ import fastfold
 import fastfold.relax.relax as relax
 from fastfold.common import protein, residue_constants
 from fastfold.config import model_config
+from fastfold.model.fastnn import set_chunk_size
 from fastfold.data import data_pipeline, feature_pipeline, templates
 from fastfold.utils import inject_fastnn
 from fastfold.utils.import_weights import import_jax_weights_
@@ -88,6 +89,8 @@ def inference_model(rank, world_size, result_q, batch, args):
     model = inject_fastnn(model)
     model = model.eval()
     model = model.cuda()
+
+    set_chunk_size(model.globals.chunk_size)
 
     with torch.no_grad():
         batch = {k: torch.as_tensor(v).cuda() for k, v in batch.items()}
