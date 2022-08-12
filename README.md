@@ -23,9 +23,13 @@ FastFold provides a **high-performance implementation of Evoformer** with the fo
 
 You will need Python 3.8 or later and [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) 11.1 or above when you are installing from source. 
 
+```shell
+git clone https://github.com/hpcaitech/FastFold
+cd FastFold
+```
 We highly recommend installing an Anaconda or Miniconda environment and install PyTorch with conda:
 
-```
+```shell
 conda env create --name=fastfold -f environment.yml
 conda activate fastfold
 bash scripts/patch_openmm.sh
@@ -34,8 +38,6 @@ bash scripts/patch_openmm.sh
 You can get the FastFold source and install it with setuptools:
 
 ```shell
-git clone https://github.com/hpcaitech/FastFold
-cd FastFold
 python setup.py install
 ```
 
@@ -55,6 +57,11 @@ from fastfold.distributed import init_dap
 
 init_dap(args.dap_size)
 ```
+
+### Download the dataset
+You can down the dataset used to train FastFold  by the script `download_all_data.sh`:
+
+    ./scripts/download_all_data.sh data/
 
 ### Inference
 
