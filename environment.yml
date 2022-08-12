@@ -16,7 +16,9 @@ dependencies:
       - typing-extensions==3.10.0.2
       - einops
       - colossalai
-  - pytorch::pytorch=1.11.0
+      - --find-links https://download.pytorch.org/whl/cu113/torch_stable.html torch==1.11.1+cu113
+      - --find-links https://download.pytorch.org/whl/cu113/torch_stable.html torchaudio==0.11.1+cu113
+      - --find-links https://download.pytorch.org/whl/cu113/torch_stable.html torchvision==0.13.1
   - conda-forge::python=3.8
   - conda-forge::setuptools=59.5.0
   - conda-forge::pip
