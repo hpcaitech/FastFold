@@ -28,4 +28,5 @@ fi
 
 python setup.py bdist_wheel
 python setup.py clean
+conda deactivate
 conda env remove -n $python_version
