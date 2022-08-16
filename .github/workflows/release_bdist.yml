@@ -51,6 +51,6 @@ jobs:
       - name: Build bdist wheel
         run: |
           pip install beautifulsoup4 requests packaging
-          python build_fastfold_wheel.py $TORCH_VERSIONS
+          python ./build_fastfold_wheel.py --torch_version $TORCH_VERSIONS
         env:
           TORCH_VERSIONS: 1.10.1
