@@ -67,7 +67,7 @@ def build_colossalai(wheel_info):
                 for python_version, wheel_info in python_versioned_wheel_info.items():
                     url = wheel_info['url']
                     filename = url.split('/')[-1].replace('%2B', '+')
-                    cmd = f'bash ./build_colossalai_wheel.sh {url} {filename} {cuda_version} {python_version}'
+                    cmd = f'bash ./build_fastfold_wheel.sh {url} {filename} {cuda_version} {python_version}'
                     os.system(cmd)
 
 def main():
