@@ -50,6 +50,6 @@ jobs:
           git_ref: workflow
       - name: Build bdist wheel
         run: |
-          bash ./build_fastfold_wheel.sh pip https://download.pytorch.org/whl/cu113/torch-1.10.1%2Bcu113-cp36-cp36m-linux_x86_64.whl torch-1.10.1+cu113-cp36-cp36m-linux_x86_64.whl 11.3 3.8 $TORCH_VERSIONS}
+          bash ./build_fastfold_wheel.sh pip https://download.pytorch.org/whl/cu113/torch-1.10.1%2Bcu113-cp38-cp38m-linux_x86_64.whl torch-1.10.1+cu113-cp38-cp38m-linux_x86_64.whl 11.3 3.8 $TORCH_VERSIONS}
         env:
           TORCH_VERSIONS: 1.10.1
