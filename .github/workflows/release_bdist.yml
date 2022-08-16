@@ -1,7 +1,23 @@
 name: Release bdist wheel
 
 on:
-  pull_request
+  workflow_dispatch:
+    inputs:
+      torch_version:
+        type: string
+        description: torch version, separated by comma
+        required: true
+        default: "all"
+      cuda_version:
+        type: string
+        description: cuda version, separated by comma
+        required: true
+      github_ref:
+        type: string
+        description: Branch or Tag
+        default: 'main'
+        required: true
+
 jobs:
   matrix_preparation:
     name: Prepare Container List
@@ -11,8 +27,8 @@ jobs:
     steps:
     - id: set-matrix
       env:
-        TORCH_VERSIONS: 1.10.1
-        CUDA_VERSIONS: 11.3
+        TORCH_VERSIONS: ${{ inputs.torch_version }}
+        CUDA_VERSIONS: ${{ inputs.cuda_version }}
       run: |
         echo $TORCH_VERSIONS
         echo $CUDA_VERSIONS
@@ -47,10 +63,18 @@ jobs:
           ln -s /github/home/pip_wheels ./pip_wheels
           git checkout $git_ref
         env:
-          git_ref: workflow
+          git_ref: ${{ github.event.inputs.github_ref }}
       - name: Build bdist wheel
         run: |
           pip install beautifulsoup4 requests packaging
           python ./build_fastfold_wheel.py --torch_version $TORCH_VERSIONS
         env:
-          TORCH_VERSIONS: 1.10.1
+          TORCH_VERSIONS: ${{ inputs.torch_version }}
+      - name: 🚀 Deploy
+        uses: garygrossgarten/github-action-scp@release
+        with:
+          local: all_dist
+          remote: ${{ secrets.PRIVATE_PYPI_DIR }}
+          host: ${{ secrets.PRIVATE_PYPI_HOST }}
+          username: ${{ secrets.PRIVATE_PYPI_USER }}
+          password: ${{ secrets.PRIVATE_PYPI_PASSWD }}
