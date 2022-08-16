@@ -17,7 +17,7 @@ if [ $1 == "pip" ]
 then
     wget -nc -q -O ./$filename $url
     pip install ./$filename
-    
+    pip install numpy
 elif [ $1 == 'conda' ]
 then
     conda install pytorch==$torch_version cudatoolkit=$cuda_version $flags
