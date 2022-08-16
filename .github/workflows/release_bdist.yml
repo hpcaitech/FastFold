@@ -1,39 +1,55 @@
 name: Release bdist wheel
 
 on:
-  workflow_dispatch:
-    inputs:
-      torch_version:
-        type: string
-        description: torch version, separated by comma
-        required: true
-        default: "all"
-      cuda_version:
-        type: string
-        description: cuda version, separated by comma
-        required: true
-      github_ref:
-        type: string
-        description: Branch or Tag
-        default: 'main'
-        required: true
-
+  pull_request
 jobs:
+  matrix_preparation:
+    name: Prepare Container List
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+    - id: set-matrix
+      env:
+        TORCH_VERSIONS: ${{ "1.10.1" }}
+        CUDA_VERSIONS: ${{ "11.3" }}
+      run: |
+        echo $TORCH_VERSIONS
+        echo $CUDA_VERSIONS
+        IFS=','
+        DOCKER_IMAGE=()
+        for cv in $CUDA_VERSIONS
+        do
+            DOCKER_IMAGE+=("\"hpcaitech/cuda-conda:${cv}\"")
+        done
+        container=$( IFS=',' ; echo "${DOCKER_IMAGE[*]}" )
+        container="[${container}]"
+        echo "$container"
+        echo "::set-output name=matrix::{\"container\":$(echo "$container")}"
   build:
     name: Release bdist wheels
-    if: github.repository == 'hpcaitech/FastFold' && contains(fromJson('["FrankLeeeee", "feifeibear", "Shenggan", "Gy-Lu"]'), github.actor)
+    needs: matrix_preparation
+    if: github.repository == 'hpcaitech/ColossalAI' && contains(fromJson('["FrankLeeeee", "feifeibear", "Shenggan", "Gy-Lu"]'), github.actor)
     runs-on: [self-hosted, gpu]
     strategy:
       fail-fast: false
-      matrix: ${{ "::set-output name=matrix::{\"container\":\"hpcaitech/cuda-conda:11.3\"}" }}
+      matrix: ${{fromJson(needs.matrix_preparation.outputs.matrix)}}
+    container:
       image: ${{ matrix.container }}
       options: --gpus all --rm
     steps:
       - uses: actions/checkout@v2
         with:
           fetch-depth: 0
+      - name: Copy scripts and checkout
+        run: |
+          cp -r ./.github/workflows/* ./
+          ln -s /github/home/pip_wheels ./pip_wheels
+          git checkout $git_ref
+        env:
+          git_ref: ${{ "workflow" }}
       - name: Build bdist wheel
         run: |
-          bash ./build_colossalai_wheel.sh pip https://download.pytorch.org/whl/cu113/torch-1.10.1%2Bcu113-cp39-cp39-linux_x86_64.whl torch-1.10.1+cu113-cp39-cp39-linux_x86_64.whl 11.3 3.9 1.10.1
+          bash ./build_fastfold_wheel.sh pip https://download.pytorch.org/whl/cu113/torch-1.10.1%2Bcu113-cp36-cp36m-linux_x86_64.whl torch-1.10.1+cu113-cp36-cp36m-linux_x86_64.whl 11.3 3.6 $TORCH_VERSIONS}
         env:
-          TORCH_VERSIONS: ${{ inputs.torch_version }}
+          TORCH_VERSIONS: ${{ "1.10.1" }}
