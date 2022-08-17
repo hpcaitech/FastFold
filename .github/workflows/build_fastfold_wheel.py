@@ -51,8 +51,8 @@ def all_wheel_info():
 
             for line in lines:
                 parts = line.split('\t')
-                _, url, python_version = parts[:3]
-                if float(python_version) < 3.8:
+                method, url, python_version = parts[:3]
+                if float(python_version) < 3.8 or method == "conda":
                     continue
                 wheel_info[torch_version][cuda_version][python_version] = dict(url=url)
     return wheel_info
