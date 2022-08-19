@@ -21,24 +21,48 @@ FastFold provides a **high-performance implementation of Evoformer** with the fo
 
 ## Installation
 
-You will need Python 3.8 or later and [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) 11.1 or above when you are installing from source. 
+To install and use FastFold, you will need:
++ Python 3.8 or later
++ [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) 11.1 or above
++ PyTorch 1.10 or above 
+
+For now, You can install FastFold:
+### Using Conda (Recommended)
+
+We highly recommend installing an Anaconda or Miniconda environment and install PyTorch with conda.
+Lines below would create a new conda environment called "fastfold":
 
 ```shell
 git clone https://github.com/hpcaitech/FastFold
 cd FastFold
-```
-We highly recommend installing an Anaconda or Miniconda environment and install PyTorch with conda:
-
-```shell
 conda env create --name=fastfold -f environment.yml
 conda activate fastfold
 bash scripts/patch_openmm.sh
+python setup.py install
 ```
 
-You can get the FastFold source and install it with setuptools:
+### Using PyPi
+You can download FastFold with pre-built CUDA extensions.
 
 ```shell
-python setup.py install
+pip install fastfold -f https://release.colossalai.org/fastfold
+```
+
+## Use Docker
+
+### Build On Your Own
+Run the following command to build a docker image from Dockerfile provided.
+
+> Building FastFold from scratch requires GPU support, you need to use Nvidia Docker Runtime as the default when doing `docker build`. More details can be found [here](https://stackoverflow.com/questions/59691207/docker-build-with-nvidia-runtime).
+
+```shell
+cd ColossalAI
+docker build -t fastfold ./docker
+```
+
+Run the following command to start the docker container in interactive mode.
+```shell
+docker run -ti --gpus all --rm --ipc=host fastfold bash
 ```
 
 ## Usage
