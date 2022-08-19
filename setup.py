@@ -129,7 +129,7 @@ else:
 
 setup(
     name='fastfold',
-    version='0.1.0',
+    version='0.1.0-beta',
     packages=find_packages(exclude=(
         'assets',
         'benchmark',
