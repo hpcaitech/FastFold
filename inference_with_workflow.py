@@ -109,7 +109,6 @@ def inference_model(rank, world_size, result_q, batch, args):
 
 
 def main(args):
-    print("--------------- inference_with_workflow.py ---------------")
     config = model_config(args.model_name)
 
     template_featurizer = templates.TemplateHitFeaturizer(
