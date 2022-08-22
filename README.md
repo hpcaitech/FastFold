@@ -92,6 +92,22 @@ python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
     --hhsearch_binary_path `which hhsearch` \
     --kalign_binary_path `which kalign`
 ```
+or run the script `./inference.sh`, you can change
+```shell
+./inference.sh
+```
+
+#### inference with data workflow
+alphafold's data pre-processing takes a lot of time, so we speed up the data pre-process by [ray](https://docs.ray.io/en/latest/workflows/concepts.html) workflow, to run the intference with ray workflow, you should install the package by
+```shell
+pip install ray pyarrow
+```
+
+Than you can run by the script `./inference_with_workflow.sh`
+
+```shell
+./inference_with_flow.sh
+```
 
 ## Performance Benchmark
 
