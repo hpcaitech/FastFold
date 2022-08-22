@@ -90,24 +90,34 @@ python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
     --jackhmmer_binary_path `which jackhmmer` \
     --hhblits_binary_path `which hhblits` \
     --hhsearch_binary_path `which hhsearch` \
-    --kalign_binary_path `which kalign`
+    --kalign_binary_path `which kalign`  
 ```
-or run the script `./inference.sh`, you can change
+or run the script `./inference.sh`, you can change the parameter in the script
 ```shell
 ./inference.sh
 ```
 
 #### inference with data workflow
-alphafold's data pre-processing takes a lot of time, so we speed up the data pre-process by [ray](https://docs.ray.io/en/latest/workflows/concepts.html) workflow, to run the intference with ray workflow, you should install the package by
+alphafold's data pre-processing takes a lot of time, so we speed up the data pre-process by [ray](https://docs.ray.io/en/latest/workflows/concepts.html) workflow, to run the intference with ray workflow, you should install the package and add parameter `--enable_workflow` to cmdline or shell script `./inference.sh`
 ```shell
 pip install ray pyarrow
 ```
-
-Than you can run by the script `./inference_with_workflow.sh`
-
 ```shell
-./inference_with_flow.sh
+python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
+    --output_dir ./ \
+    --gpus 2 \
+    --uniref90_database_path data/uniref90/uniref90.fasta \
+    --mgnify_database_path data/mgnify/mgy_clusters_2018_12.fa \
+    --pdb70_database_path data/pdb70/pdb70 \
+    --uniclust30_database_path data/uniclust30/uniclust30_2018_08/uniclust30_2018_08 \
+    --bfd_database_path data/bfd/bfd_metaclust_clu_complete_id30_c90_final_seq.sorted_opt \
+    --jackhmmer_binary_path `which jackhmmer` \
+    --hhblits_binary_path `which hhblits` \
+    --hhsearch_binary_path `which hhsearch` \
+    --kalign_binary_path `which kalign`  \
+    --enable_workflow 
 ```
+
 
 ## Performance Benchmark
 
