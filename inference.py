@@ -32,6 +32,7 @@ from fastfold.config import model_config
 from fastfold.model.fastnn import set_chunk_size
 from fastfold.data import data_pipeline, feature_pipeline, templates
 from fastfold.utils import inject_fastnn
+from fastfold.data.parsers import parse_fasta
 from fastfold.utils.import_weights import import_jax_weights_
 from fastfold.utils.tensor_utils import tensor_tree_map
 
@@ -141,10 +142,8 @@ def main(args):
 
     # Gather input sequences
     with open(args.fasta_path, "r") as fp:
-        lines = [l.strip() for l in fp.readlines()]
-
-    tags, seqs = lines[::2], lines[1::2]
-    tags = [l[1:] for l in tags]
+        fasta = fp.read()
+    seqs, tags = parse_fasta(fasta)
 
     for tag, seq in zip(tags, seqs):
         batch = [None]
