@@ -20,7 +20,6 @@ import glob
 import logging
 import os
 import subprocess
-import ray
 from typing import Any, Callable, Mapping, Optional, Sequence
 from urllib import request
 from time import time
@@ -28,7 +27,6 @@ from time import time
 from fastfold.data.tools import utils
 
 
-@ray.remote
 class Jackhmmer:
     """Python wrapper of the Jackhmmer binary."""
 
@@ -185,6 +183,7 @@ class Jackhmmer:
 
     def query(self, input_fasta_path: str) -> Sequence[Mapping[str, Any]]:
         """Queries the database using Jackhmmer."""
+        print(f"JackHmmer on {self.database_path} start!")
         startQuery = time()
         if self.num_streamed_chunks is None:
             res = [self._query_chunk(input_fasta_path, self.database_path)]
