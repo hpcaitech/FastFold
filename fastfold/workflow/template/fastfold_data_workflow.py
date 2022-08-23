@@ -70,7 +70,7 @@ class FastFoldDataWorkFlow:
 
     def run(self, fasta_path: str, output_dir: str, alignment_dir: str=None) -> None:
 
-        localtime = time.asctime( time.localtime(time.time()) )
+        localtime = time.asctime(time.localtime(time.time()))
         workflow_id = 'fastfold_data_workflow ' + str(localtime)
         # clearing remaining ray workflow data
         try:

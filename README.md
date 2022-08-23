@@ -18,6 +18,7 @@ FastFold provides a **high-performance implementation of Evoformer** with the fo
 3. Ease of use
     * Huge performance gains with a few lines changes
     * You don't need to care about how the parallel part is implemented
+4. Faster data processing, about 3x times faster than the original way
 
 ## Installation
 
@@ -115,7 +116,7 @@ python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
     --jackhmmer_binary_path `which jackhmmer` \
     --hhblits_binary_path `which hhblits` \
     --hhsearch_binary_path `which hhsearch` \
-    --kalign_binary_path `which kalign`  
+    --kalign_binary_path `which kalign`
 ```
 or run the script `./inference.sh`, you can change the parameter in the script, especisally those data path.
 ```shell
@@ -125,7 +126,7 @@ or run the script `./inference.sh`, you can change the parameter in the script, 
 #### inference with data workflow
 alphafold's data pre-processing takes a lot of time, so we speed up the data pre-process by [ray](https://docs.ray.io/en/latest/workflows/concepts.html) workflow, to run the intference with ray workflow, you should install the package and add parameter `--enable_workflow` to cmdline or shell script `./inference.sh`
 ```shell
-pip install ray pyarrow
+pip install ray==1.13.0 pyarrow
 ```
 ```shell
 python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \

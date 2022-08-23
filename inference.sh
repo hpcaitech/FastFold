@@ -10,4 +10,4 @@ python inference.py target.fasta /data/pdb_mmcif/mmcif_files \
     --hhblits_binary_path `which hhblits` \
     --hhsearch_binary_path `which hhsearch` \
     --kalign_binary_path `which kalign`  \
-    # --enable_workflow 
+    # --enable_workflow
