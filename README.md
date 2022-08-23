@@ -117,7 +117,7 @@ python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
     --hhsearch_binary_path `which hhsearch` \
     --kalign_binary_path `which kalign`  
 ```
-or run the script `./inference.sh`, you can change the parameter in the script
+or run the script `./inference.sh`, you can change the parameter in the script, especisally those data path.
 ```shell
 ./inference.sh
 ```

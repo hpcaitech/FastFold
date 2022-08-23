@@ -1,7 +1,4 @@
-rm -rf alignments/
-rm -rf *.pdb
-
-python inference.py target.fasta /data/scratch/alphafold/alphafold/pdb_mmcif/mmcif_files \
+python inference.py target.fasta /data/pdb_mmcif/mmcif_files \
     --output_dir ./ \
     --gpus 2 \
     --uniref90_database_path data/uniref90/uniref90.fasta \
