@@ -72,7 +72,8 @@ class HHBlits:
             HHblits default: 20.
           z: Hard cap on number of hits reported in the hhr file.
             HHblits default: 500. NB: The relevant HHblits flag is -Z not -z.
-          cov: Minimum coverage with master sequence (%)
+          cov: Minimum coverage with master sequence (%).
+            HHBlits default: 0
 
         Raises:
           RuntimeError: If HHblits binary not found within the path.
