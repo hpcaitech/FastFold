@@ -18,7 +18,6 @@ import glob
 import logging
 import os
 import subprocess
-import ray
 from time import time
 from typing import Any, Mapping, Optional, Sequence
 
@@ -28,7 +27,6 @@ from fastfold.data.tools import utils
 _HHBLITS_DEFAULT_P = 20
 _HHBLITS_DEFAULT_Z = 500
 
-@ray.remote
 class HHBlits:
     """Python wrapper of the HHblits binary."""
 
@@ -48,6 +46,7 @@ class HHBlits:
         alt: Optional[int] = None,
         p: int = _HHBLITS_DEFAULT_P,
         z: int = _HHBLITS_DEFAULT_Z,
+        cov: int = 0,
     ):
         """Initializes the Python HHblits wrapper.
 
@@ -73,6 +72,7 @@ class HHBlits:
             HHblits default: 20.
           z: Hard cap on number of hits reported in the hhr file.
             HHblits default: 500. NB: The relevant HHblits flag is -Z not -z.
+          cov: Minimum coverage with master sequence (%)
 
         Raises:
           RuntimeError: If HHblits binary not found within the path.
@@ -100,10 +100,12 @@ class HHBlits:
         self.alt = alt
         self.p = p
         self.z = z
+        self.cov = cov
 
     def query(self, input_fasta_path: str) -> Mapping[str, Any]:
         """Queries the database using HHblits."""
         startQuery = time()
+        print(f"HHBlits on {input_fasta_path} with {self.databases} starts")
         with utils.tmpdir_manager(base_dir="/tmp") as query_tmp_dir:
             a3m_path = os.path.join(query_tmp_dir, "output.a3m")
 
@@ -142,9 +144,13 @@ class HHBlits:
                 cmd += ["-p", str(self.p)]
             if self.z != _HHBLITS_DEFAULT_Z:
                 cmd += ["-Z", str(self.z)]
+            if self.cov:
+                cmd += ["-cov", str(self.cov)]
             cmd += db_cmd
 
             logging.info('Launching subprocess "%s"', " ".join(cmd))
+            commandstr = " ".join(cmd)
+            print(f"HHblits on {self.databases} start with command {commandstr}")
             process = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
             )
@@ -176,5 +182,5 @@ class HHBlits:
             e_value=self.e_value,
         )
         endQuery = time()
-        print(f"HHBlits query took {endQuery - startQuery}s")
+        print(f"HHBlits on {self.databases} query took {endQuery - startQuery}s")
         return raw_output
