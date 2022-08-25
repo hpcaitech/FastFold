@@ -22,10 +22,10 @@ from typing import Sequence, Union
 
 from fastfold.data.tools import utils
 
+
 class HHSearch:
     """Python wrapper of the HHsearch binary."""
 
-    # https://manpages.ubuntu.com/manpages/bionic/man1/hhsearch.1.html
     def __init__(
         self,
         *,

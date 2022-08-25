@@ -675,3 +675,4 @@ class DataPipeline:
         msa_features = self._process_msa_feats(alignment_dir, input_sequence)
 
         return {**core_feats, **template_features, **msa_features}
+
