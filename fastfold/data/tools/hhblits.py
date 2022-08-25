@@ -18,7 +18,6 @@ import glob
 import logging
 import os
 import subprocess
-from time import time
 from typing import Any, Mapping, Optional, Sequence
 
 from fastfold.data.tools import utils
@@ -26,6 +25,7 @@ from fastfold.data.tools import utils
 
 _HHBLITS_DEFAULT_P = 20
 _HHBLITS_DEFAULT_Z = 500
+
 
 class HHBlits:
     """Python wrapper of the HHblits binary."""
@@ -105,8 +105,6 @@ class HHBlits:
 
     def query(self, input_fasta_path: str) -> Mapping[str, Any]:
         """Queries the database using HHblits."""
-        startQuery = time()
-        print(f"HHBlits on {input_fasta_path} with {self.databases} starts")
         with utils.tmpdir_manager(base_dir="/tmp") as query_tmp_dir:
             a3m_path = os.path.join(query_tmp_dir, "output.a3m")
 
@@ -150,8 +148,6 @@ class HHBlits:
             cmd += db_cmd
 
             logging.info('Launching subprocess "%s"', " ".join(cmd))
-            commandstr = " ".join(cmd)
-            print(f"HHblits on {self.databases} start with command {commandstr}")
             process = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
             )
@@ -182,6 +178,4 @@ class HHBlits:
             n_iter=self.n_iter,
             e_value=self.e_value,
         )
-        endQuery = time()
-        print(f"HHBlits on {self.databases} query took {endQuery - startQuery}s")
         return raw_output

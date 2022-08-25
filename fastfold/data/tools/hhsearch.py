@@ -18,7 +18,6 @@ import glob
 import logging
 import os
 import subprocess
-from time import time
 from typing import Sequence, Union
 
 from fastfold.data.tools import utils
@@ -90,8 +89,6 @@ class HHSearch:
 
     def query(self, a3m: str, gen_atab: bool = False) -> Union[str, tuple]:
         """Queries the database using HHsearch using a given a3m."""
-        print(f"HHSearch on {self.databases} start!")
-        startQuery = time()
         with utils.tmpdir_manager(base_dir="/tmp") as query_tmp_dir:
             input_path = os.path.join(query_tmp_dir, "query.a3m")
             hhr_path = os.path.join(query_tmp_dir, "output.hhr")
@@ -153,8 +150,6 @@ class HHSearch:
             if gen_atab:
                 with open(atab_path) as f:
                     atab = f.read()
-            endQuery = time()
-            print(f"HHSearch on {self.databases} query took {endQuery - startQuery}s")
         if gen_atab:
             return hhr, atab
         else:
