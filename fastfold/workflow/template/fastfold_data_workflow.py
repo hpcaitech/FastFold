@@ -98,7 +98,7 @@ class FastFoldDataWorkFlow:
         # set jackhmmer output path
         uniref90_out_path = os.path.join(alignment_dir, "uniref90_hits.a3m")
         # generate the workflow with i/o path
-        wf1 = jh_fac.gen_task(fasta_path, uniref90_out_path)
+        jh_node_1 = jh_fac.gen_node(fasta_path, uniref90_out_path)
 
         #Run HHSearch on STEP1's result with PDB70"""
         # create HHSearch workflow generator
@@ -111,7 +111,7 @@ class FastFoldDataWorkFlow:
         # set HHSearch output path
         pdb70_out_path = os.path.join(alignment_dir, "pdb70_hits.hhr")
         # generate the workflow (STEP2 depend on STEP1)
-        wf2 = hhs_fac.gen_task(uniref90_out_path, pdb70_out_path, after=[wf1])
+        hhs_node = hhs_fac.gen_node(uniref90_out_path, pdb70_out_path, after=[jh_node_1])
 
         # Run JackHmmer on MGNIFY
         # reconfigure jackhmmer factory to use MGNIFY DB instead
@@ -119,7 +119,7 @@ class FastFoldDataWorkFlow:
         # set jackhmmer output path
         mgnify_out_path = os.path.join(alignment_dir, "mgnify_hits.a3m")
         # generate workflow for STEP3
-        wf3 = jh_fac.gen_task(fasta_path, mgnify_out_path)
+        jh_node_2 = jh_fac.gen_node(fasta_path, mgnify_out_path)
 
         # Run HHBlits on BFD
         # create HHBlits workflow generator
@@ -132,9 +132,9 @@ class FastFoldDataWorkFlow:
         # set HHBlits output path
         bfd_out_path = os.path.join(alignment_dir, "bfd_uniclust_hits.a3m")
         # generate workflow for STEP4
-        wf4 = hhb_fac.gen_task(fasta_path, bfd_out_path)
+        hhb_node = hhb_fac.gen_node(fasta_path, bfd_out_path)
 
         # run workflow
-        batch_run(wfs=[wf2, wf3, wf4], workflow_id=workflow_id)
+        batch_run(workflow_id=workflow_id, dags=[hhs_node, jh_node_2, hhb_node])
 
         return
