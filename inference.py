@@ -111,6 +111,7 @@ def inference_model(rank, world_size, result_q, batch, args):
 
 def main(args):
     config = model_config(args.model_name)
+    global_is_multimer = True if args.model_preset == "multimer" else False
 
     template_featurizer = templates.TemplateHitFeaturizer(
         mmcif_dir=args.template_mmcif_dir,
@@ -289,6 +290,14 @@ if __name__ == "__main__":
                         default='full_dbs',
                         choices=('reduced_dbs', 'full_dbs'))
     parser.add_argument('--data_random_seed', type=str, default=None)
+    parser.add_argument(
+        "--model_preset",
+        type=str,
+        default="monomer",
+        choices=["monomer", "multimer"],
+        help="Choose preset model configuration - the monomer model, the monomer model with "
+        "extra ensembling, monomer model with pTM head, or multimer model",
+    )
     add_data_args(parser)
     args = parser.parse_args()
 
