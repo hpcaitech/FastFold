@@ -1,25 +1,14 @@
 from ast import Call
 from typing import Callable, List
-from ray.workflow.common import Workflow
+import ray
+from ray.dag.function_node import FunctionNode
 from ray import workflow
 
-def batch_run(wfs: List[Workflow], workflow_id: str) -> None:
+def batch_run(workflow_id: str, dags: List[FunctionNode]) -> None:
 
-    @workflow.step
-    def batch_step(wfs) -> None:
+    @ray.remote
+    def batch_dag_func(dags) -> None:
         return
 
-    batch_wf = batch_step.step(wfs)
-
-    batch_wf.run(workflow_id=workflow_id)
-
-def wf(after: List[Workflow]=None):
-    def decorator(f: Callable):
-
-        @workflow.step
-        def step_func(after: List[Workflow]) -> None:
-            f()
-        
-        return step_func.step(after)
-    
-    return decorator
+    batch = batch_dag_func.bind(dags)
+    workflow.run(batch, workflow_id=workflow_id)

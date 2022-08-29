@@ -1,29 +1,29 @@
-from ray import workflow
 from typing import List
+
+import ray
+from ray.dag.function_node import FunctionNode
+
 from fastfold.workflow.factory import TaskFactory
-from ray.workflow.common import Workflow
 import fastfold.data.tools.hhblits as ffHHBlits
 
 class HHBlitsFactory(TaskFactory):
 
     keywords = ['binary_path', 'databases', 'n_cpu']
 
-    def gen_task(self, fasta_path: str, output_path: str, after: List[Workflow]=None) -> Workflow:
+    def gen_node(self, fasta_path: str, output_path: str, after: List[FunctionNode]=None) -> FunctionNode:
         
         self.isReady()
 
         # setup runner
         runner = ffHHBlits.HHBlits(
-            binary_path=self.config['binary_path'],
-            databases=self.config['databases'],
-            n_cpu=self.config['n_cpu']
+            **self.config
         )
 
-        # generate step function
-        @workflow.step
-        def hhblits_step(fasta_path: str, output_path: str, after: List[Workflow]) -> None:
+        # generate function node
+        @ray.remote
+        def hhblits_node_func(after: List[FunctionNode]) -> None:
             result = runner.query(fasta_path)
-            with open(output_path, "w") as f:
-                f.write(result["a3m"])
+            with open(output_path, 'w') as f:
+                f.write(result['a3m'])
 
-        return hhblits_step.step(fasta_path, output_path, after)
+        return hhblits_node_func.bind(after)

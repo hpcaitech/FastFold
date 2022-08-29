@@ -1,8 +1,9 @@
 from ast import keyword
 import json
-from ray.workflow.common import Workflow
 from os import path
 from typing import List
+import ray
+from ray.dag.function_node import FunctionNode
 
 class TaskFactory:
 
@@ -31,7 +32,7 @@ class TaskFactory:
     def configure(self, keyword: str, value: any) -> None:
         self.config[keyword] = value
 
-    def gen_task(self, after: List[Workflow]=None, *args, **kwargs) -> Workflow:
+    def gen_task(self, after: List[FunctionNode]=None, *args, **kwargs) -> FunctionNode:
         raise NotImplementedError
 
     def isReady(self):

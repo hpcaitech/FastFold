@@ -1,27 +1,31 @@
-from fastfold.workflow.factory import TaskFactory
-from ray import workflow
-from ray.workflow.common import Workflow
-import fastfold.data.tools.hhsearch as ffHHSearch
 from typing import List
+import inspect
+
+import ray
+from ray.dag.function_node import FunctionNode
+
+import fastfold.data.tools.hhsearch as ffHHSearch
+from fastfold.workflow.factory import TaskFactory
+
 
 class HHSearchFactory(TaskFactory):
 
     keywords = ['binary_path', 'databases', 'n_cpu']
 
-    def gen_task(self, a3m_path: str, output_path: str, after: List[Workflow]=None) -> Workflow:
+    def gen_node(self, a3m_path: str, output_path: str, atab_path: str = None, after: List[FunctionNode]=None) -> FunctionNode:
 
         self.isReady()
+
+        params = { k: self.config.get(k) for k in inspect.getfullargspec(ffHHSearch.HHSearch.__init__).kwonlyargs if self.config.get(k) }
         
-        # setup runner
+        # setup runner with a filtered config dict
         runner = ffHHSearch.HHSearch(
-            binary_path=self.config['binary_path'],
-            databases=self.config['databases'],
-            n_cpu=self.config['n_cpu']
+            **params
         )
 
-        # generate step function
-        @workflow.step
-        def hhsearch_step(a3m_path: str, output_path: str, after: List[Workflow], atab_path: str = None) -> None:
+        # generate function node
+        @ray.remote
+        def hhsearch_node_func(after: List[FunctionNode]) -> None:
 
             with open(a3m_path, "r") as f:
                 a3m = f.read()
@@ -35,4 +39,4 @@ class HHSearchFactory(TaskFactory):
                 with open(atab_path, "w") as f:
                     f.write(atab)
 
-        return hhsearch_step.step(a3m_path, output_path, after)
+        return hhsearch_node_func.bind(after)
