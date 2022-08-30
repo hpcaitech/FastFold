@@ -26,6 +26,7 @@ from fastfold.utils.feats import (
 )
 from fastfold.model.nn.embedders import (
     InputEmbedder,
+    InputEmbedderMultimer,
     RecyclingEmbedder,
     TemplateAngleEmbedder,
     TemplatePairEmbedder,
@@ -69,9 +70,14 @@ class AlphaFold(nn.Module):
         extra_msa_config = config.extra_msa
 
         # Main trunk + structure module
-        self.input_embedder = InputEmbedder(
-            **config["input_embedder"],
-        )
+        if self.globals.is_multimer:
+            self.input_embedder = InputEmbedderMultimer(
+                **config["input_embedder"],
+            )
+        else:   
+            self.input_embedder = InputEmbedder(
+                **config["input_embedder"],
+            )
         self.recycling_embedder = RecyclingEmbedder(
             **config["recycling_embedder"],
         )
