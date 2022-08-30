@@ -7,9 +7,10 @@ from fastfold.model.fastnn.kernel import LayerNorm
 
 from .initializer import glorot_uniform_af
 
-from fastfold.model.fastnn.kernel import bias_sigmod_ele
+from fastfold.model.fastnn.kernel import bias_sigmod_ele, bias_ele_dropout_residual
 from fastfold.distributed import gather, scatter
 from fastfold.distributed.comm_async import gather_async, gather_async_opp
+
 
 CHUNK_SIZE = None
 
@@ -57,6 +58,29 @@ class Transition(nn.Module):
         x = self.norm(src)
         x = self.linear2(F.relu(self.linear1(x)))
         return src + x
+
+
+class ChunkTransition(nn.Module):
+
+    def __init__(self, d, n=4):
+        super(ChunkTransition, self).__init__()
+        self.norm = LayerNorm(d)
+        self.linear1 = Linear(d, n * d, initializer='relu')
+        self.linear2 = Linear(n * d, d, initializer='zeros')
+
+    def forward(self, src):
+        para_dim = src.shape[1]
+        chunk_size = CHUNK_SIZE
+        if CHUNK_SIZE == None:
+            chunk_size = para_dim
+
+        out = torch.empty_like(src)
+        for ax in range(0, para_dim, chunk_size):
+            x = self.norm(src[:, ax:ax + chunk_size, :, :])
+            x = self.linear2(F.relu(self.linear1(x)))
+            out[:, ax:ax + chunk_size, :, :] = x
+        out.add_(src)
+        return out
 
 
 class OutProductMean(nn.Module):
@@ -218,4 +242,154 @@ class SelfAttention(nn.Module):
 
         output = torch.cat(output, dim=1)
         
+        return output
+
+
+def permute_final_dims(tensor, inds):
+    zero_index = -1 * len(inds)
+    first_inds = list(range(len(tensor.shape[:zero_index])))
+    return tensor.permute(first_inds + [zero_index + i for i in inds])
+
+
+class ChunkTriangleMultiplicationOutgoing(nn.Module):
+
+    def __init__(self, d_pair, p_drop, c=128):
+        super(ChunkTriangleMultiplicationOutgoing, self).__init__()
+        self.d_pair = d_pair
+        self.c = c
+
+        self.layernorm1 = LayerNorm(d_pair)
+        self.left_right_projection = Linear(d_pair, 2 * c)
+        self.left_right_gate = Linear(d_pair, 2 * c, initializer='zeros', bias_init=1.)
+
+        self.output_gate = Linear(d_pair, d_pair, initializer='zeros', bias_init=1.)
+        self.layernorm2 = LayerNorm(c)
+        self.output_projection = Linear(d_pair, d_pair, initializer='zeros', use_bias=False)
+        self.output_bias = nn.parameter.Parameter(data=torch.zeros((d_pair,)), requires_grad=True)
+
+        self.p_drop = p_drop
+
+    def forward(self, Z_raw, Z_mask_row):
+
+        para_dim = Z_raw.shape[1]
+        chunk_size = 256
+        if CHUNK_SIZE == None:
+            chunk_size = para_dim
+
+        output = torch.empty_like(Z_raw)
+        
+        for i in range(0, para_dim, chunk_size):
+            zi = Z_raw[:, i:i + chunk_size, :, :]
+            zi = self.layernorm1(zi)
+            i_left_right_proj_act = self.left_right_projection(zi)
+            i_left_right_proj_act = Z_mask_row[:, i:i + chunk_size, :].unsqueeze(-1) * i_left_right_proj_act
+            
+            for j in range(0, para_dim, chunk_size):
+                
+                zij = Z_raw[:, i:i + chunk_size, j:j + chunk_size, :]
+                g = torch.sigmoid(self.left_right_gate(zij))
+                
+                ij_left_right_proj_act = i_left_right_proj_act * torch.sum(g, dim=2).unsqueeze(-2)
+                left_proj_act, _ = ij_left_right_proj_act.chunk(2, dim=-1)
+                left_proj_act = permute_final_dims(left_proj_act, (2, 0, 1))
+                
+                zj = Z_raw[:, j:j + chunk_size, :, :]
+                zj = self.layernorm1(zj)
+                j_left_right_proj_act = self.left_right_projection(zj)
+                j_left_right_proj_act = Z_mask_row[:, j:j + chunk_size, :].unsqueeze(-1) * j_left_right_proj_act
+                j_left_right_proj_act *= torch.sum(g, dim=1).unsqueeze(-2)
+                _, right_proj_act = j_left_right_proj_act.chunk(2, dim=-1)
+                
+                p = torch.matmul(
+                    left_proj_act,
+                    permute_final_dims(right_proj_act, (2, 1, 0)),
+                )
+                p = permute_final_dims(p, (1, 2, 0))
+                output[:, i:i + chunk_size, j:j + chunk_size, :] = p
+
+        dropout_mask = torch.ones_like(Z_raw[:, 0:1, :, :], device=Z_raw.device, dtype=Z_raw.dtype)
+        for i in range(0, para_dim, chunk_size):
+            z_raw = output[:, i:i + chunk_size, :, :]
+            g = torch.sigmoid(self.output_gate(z_raw))
+            z = self.output_projection(self.layernorm2(z_raw))
+            z = bias_ele_dropout_residual(z,
+                                    self.output_bias,
+                                    g,
+                                    dropout_mask,
+                                    z_raw,
+                                    prob=self.p_drop,
+                                    training=self.training)
+            output[:, i:i + chunk_size, :, :] = z
+        return output
+
+
+class ChunkTriangleMultiplicationIncoming(nn.Module):
+
+    def __init__(self, d_pair, p_drop, c=128):
+        super(ChunkTriangleMultiplicationIncoming, self).__init__()
+        self.d_pair = d_pair
+        self.c = c
+
+        self.layernorm1 = LayerNorm(d_pair)
+        self.left_right_projection = Linear(d_pair, 2 * c)
+        self.left_right_gate = Linear(d_pair, 2 * c, initializer='zeros', bias_init=1.)
+
+        self.output_gate = Linear(d_pair, d_pair, initializer='zeros', bias_init=1.)
+        self.layernorm2 = LayerNorm(c)
+        self.output_projection = Linear(d_pair, d_pair, initializer='zeros', use_bias=False)
+        self.output_bias = nn.parameter.Parameter(data=torch.zeros((d_pair,)), requires_grad=True)
+
+        self.p_drop = p_drop
+
+    def forward(self, Z_raw, Z_mask_col):
+
+        para_dim = Z_raw.shape[1]
+        chunk_size = 256
+        if CHUNK_SIZE == None:
+            chunk_size = para_dim
+
+        output = torch.empty_like(Z_raw)
+        
+        for i in range(0, para_dim, chunk_size):
+            zi = Z_raw[:, i:i + chunk_size, :, :]
+            zi = self.layernorm1(zi)
+            i_left_right_proj_act = self.left_right_projection(zi)
+            i_left_right_proj_act = Z_mask_col[:, i:i + chunk_size, :].unsqueeze(-1) * i_left_right_proj_act
+            
+            for j in range(0, para_dim, chunk_size):
+                
+                zij = Z_raw[:, i:i + chunk_size, j:j + chunk_size, :]
+                g = torch.sigmoid(self.left_right_gate(zij))
+                
+                ij_left_right_proj_act = i_left_right_proj_act * torch.sum(g, dim=2).unsqueeze(-2)
+                left_proj_act, _ = ij_left_right_proj_act.chunk(2, dim=-1)
+                left_proj_act = permute_final_dims(left_proj_act, (2, 1, 0))
+                
+                zj = Z_raw[:, j:j + chunk_size, :, :]
+                zj = self.layernorm1(zj)
+                j_left_right_proj_act = self.left_right_projection(zj)
+                j_left_right_proj_act = Z_mask_col[:, j:j + chunk_size, :].unsqueeze(-1) * j_left_right_proj_act
+                j_left_right_proj_act *= torch.sum(g, dim=1).unsqueeze(-2)
+                _, right_proj_act = j_left_right_proj_act.chunk(2, dim=-1)
+                
+                p = torch.matmul(
+                    left_proj_act,
+                    permute_final_dims(right_proj_act, (2, 0, 1)),
+                )
+                p = permute_final_dims(p, (1, 2, 0))
+                output[:, i:i + chunk_size, j:j + chunk_size, :] = p
+
+        dropout_mask = torch.ones_like(Z_raw[:, 0:1, :, :], device=Z_raw.device, dtype=Z_raw.dtype)
+        for i in range(0, para_dim, chunk_size):
+            z_raw = output[:, i:i + chunk_size, :, :]
+            g = torch.sigmoid(self.output_gate(z_raw))
+            z = self.output_projection(self.layernorm2(z_raw))
+            z = bias_ele_dropout_residual(z,
+                                    self.output_bias,
+                                    g,
+                                    dropout_mask,
+                                    z_raw,
+                                    prob=self.p_drop,
+                                    training=self.training)
+            output[:, i:i + chunk_size, :, :] = z
         return output
