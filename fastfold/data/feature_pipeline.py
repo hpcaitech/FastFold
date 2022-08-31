@@ -20,7 +20,7 @@ import ml_collections
 import numpy as np
 import torch
 
-from fastfold.data import input_pipeline
+from fastfold.data import input_pipeline, input_pipeline_multimer
 
 
 FeatureDict = Mapping[str, np.ndarray]
@@ -72,10 +72,14 @@ def make_data_config(
 def np_example_to_features(
     np_example: FeatureDict,
     config: ml_collections.ConfigDict,
+    is_multimer: bool,
     mode: str,
 ):
     np_example = dict(np_example)
-    num_res = int(np_example["seq_length"][0])
+    if is_multimer:
+        num_res = int(np_example["seq_length"])
+    else:
+        num_res = int(np_example["seq_length"][0])
     cfg, feature_names = make_data_config(config, mode=mode, num_res=num_res)
 
     if "deletion_matrix_int" in np_example:
@@ -87,11 +91,18 @@ def np_example_to_features(
         np_example=np_example, features=feature_names
     )
     with torch.no_grad():
-        features = input_pipeline.process_tensors_from_config(
-            tensor_dict,
-            cfg.common,
-            cfg[mode],
-        )
+        if is_multimer:
+            features = input_pipeline_multimer.process_tensors_from_config(
+                tensor_dict,
+                cfg.common,
+                cfg[mode],
+            )
+        else:
+            features = input_pipeline.process_tensors_from_config(
+                tensor_dict,
+                cfg.common,
+                cfg[mode],
+            )
 
     return {k: v for k, v in features.items()}
 
@@ -107,9 +118,11 @@ class FeaturePipeline:
         self,
         raw_features: FeatureDict,
         mode: str = "train", 
+        is_multimer: bool = False,
     ) -> FeatureDict:
         return np_example_to_features(
             np_example=raw_features,
             config=self.config,
             mode=mode,
+            is_multimer=is_multimer,
         )
