@@ -43,7 +43,7 @@ def _gather(tensor: Tensor, dim: int = -1) -> Tensor:
     if gpc.get_world_size(ParallelMode.TENSOR) == 1:
         return tensor
 
-    if dim == 1:
+    if dim == 1 and list(tensor.shape)[0] == 1:
         output_shape = list(tensor.shape)
         output_shape[1] *= gpc.get_world_size(ParallelMode.TENSOR)
         output = torch.empty(output_shape, dtype=tensor.dtype, device=tensor.device)

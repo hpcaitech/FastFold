@@ -1,6 +1,7 @@
 import os
 import time
 from multiprocessing import cpu_count
+import ray
 from ray import workflow
 from fastfold.workflow.factory import JackHmmerFactory, HHSearchFactory, HHBlitsFactory
 from fastfold.workflow import batch_run
@@ -80,6 +81,7 @@ class FastFoldDataWorkFlow:
             print("Workflow not found. Clean. Skipping")
             pass
 
+        
         # prepare alignment directory for alignment outputs
         if alignment_dir is None:
             alignment_dir = os.path.join(output_dir, "alignment")

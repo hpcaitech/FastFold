@@ -32,7 +32,7 @@ from fastfold.distributed.comm_async import All_to_All_Async, All_to_All_Async_O
 
 class EvoformerBlock(nn.Module):
 
-    def __init__(self, c_m: int, c_z: int, first_block: bool, last_block: bool):
+    def __init__(self, c_m: int, c_z: int, first_block: bool, last_block: bool, is_multimer: bool=False):
         super(EvoformerBlock, self).__init__()
 
         self.first_block = first_block
@@ -41,6 +41,7 @@ class EvoformerBlock(nn.Module):
         self.msa_stack = MSAStack(c_m, c_z, p_drop=0.15)
         self.communication = OutProductMean(n_feat=c_m, n_feat_out=c_z, n_feat_proj=32)
         self.pair_stack = PairStack(d_pair=c_z)
+        self.is_multimer = is_multimer 
 
     def forward(
         self,
@@ -73,12 +74,19 @@ class EvoformerBlock(nn.Module):
         msa_mask = torch.nn.functional.pad(msa_mask, (0, padding_size))
         pair_mask = torch.nn.functional.pad(pair_mask, (0, padding_size, 0, padding_size))
 
-        m = self.msa_stack(m, z, msa_mask)
-
-        z = z + self.communication(m, msa_mask)
-        m, work = All_to_All_Async.apply(m, 1, 2)
-        z = self.pair_stack(z, pair_mask)
-        m = All_to_All_Async_Opp.apply(m, work, 1, 2)
+        if not self.is_multimer:
+            m = self.msa_stack(m, z, msa_mask)
+            z = z + self.communication(m, msa_mask)
+            m, work = All_to_All_Async.apply(m, 1, 2)
+            z = self.pair_stack(z, pair_mask)
+            m = All_to_All_Async_Opp.apply(m, work, 1, 2)
+        else:
+            z = z + self.communication(m, msa_mask)
+            z_ori = z
+            m, work = All_to_All_Async.apply(m, 1, 2)
+            z = self.pair_stack(z, pair_mask)
+            m = All_to_All_Async_Opp.apply(m, work, 1, 2)
+            m = self.msa_stack(m, z_ori, msa_mask)
 
         if self.last_block:
             m = m.squeeze(0)
@@ -260,7 +268,6 @@ class TemplatePairStackBlock(nn.Module):
             single_templates[i] = single
 
         z = torch.cat(single_templates, dim=-4)
-
         if self.last_block:
             z = gather(z, dim=1)
             z = z[:, :-padding_size, :-padding_size, :]

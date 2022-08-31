@@ -59,7 +59,7 @@ Run the following command to build a docker image from Dockerfile provided.
 
 ```shell
 cd ColossalAI
-docker build -t fastfold ./docker
+docker build -t Fastfold ./docker
 ```
 
 Run the following command to start the docker container in interactive mode.
