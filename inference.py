@@ -159,6 +159,7 @@ def main(args):
         print("Generating features...")
         local_alignment_dir = os.path.join(alignment_dir, tag)
         if global_is_multimer:
+            print("multimer mode")
             feature_dict = pickle.load(open("/home/lcmql/data/features_pdb1o5d.pkl", "rb"))
         else:
             if (args.use_precomputed_alignments is None):
@@ -195,17 +196,17 @@ def main(args):
                         no_cpus=args.cpus,
                     )
                     alignment_runner.run(fasta_path, local_alignment_dir)
-
-        feature_dict = data_processor.process_fasta(fasta_path=fasta_path,
+                    
+            feature_dict = data_processor.process_fasta(fasta_path=fasta_path,
                                                     alignment_dir=local_alignment_dir)
 
-        # feature_dict = pickle.load(open("/home/lcmql/data/features_pdb1o5d.pkl", "rb"))
         # Remove temporary FASTA file
         os.remove(fasta_path)
 
         processed_feature_dict = feature_processor.process_features(
             feature_dict,
             mode='predict',
+            is_multimer=global_is_multimer,
         )
 
         batch = processed_feature_dict
@@ -276,7 +277,7 @@ if __name__ == "__main__":
                         type=str,
                         default="model_1",
                         help="""Name of a model config. Choose one of model_{1-5} or 
-             model_{1-5}_ptm, as defined on the AlphaFold GitHub.""")
+             model_{1-5}_ptm or model_{1-5}_multimer, as defined on the AlphaFold GitHub.""")
     parser.add_argument("--param_path",
                         type=str,
                         default=None,

@@ -3,7 +3,7 @@ from functools import partial
 
 import torch
 import torch.nn as nn
-from typing import Tuple
+from typing import Tuple, Dict
 
 from fastfold.utils import all_atom_multimer
 from fastfold.utils.feats import dgram_from_positions
