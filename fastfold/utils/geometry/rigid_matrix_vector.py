@@ -20,7 +20,6 @@ from typing import Union, List
 import torch
 
 from fastfold.utils.geometry import rotation_matrix
-from fastfold.utils.geometry import struct_of_array
 from fastfold.utils.geometry import vector
 
 

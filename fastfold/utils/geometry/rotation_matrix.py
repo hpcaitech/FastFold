@@ -19,7 +19,6 @@ import dataclasses
 import torch
 import numpy as np
 
-from fastfold.utils.geometry import struct_of_array
 from fastfold.utils.geometry import utils
 from fastfold.utils.geometry import vector
 from fastfold.utils.tensor_utils import tensor_tree_map
