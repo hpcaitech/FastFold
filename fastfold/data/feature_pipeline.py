@@ -82,6 +82,8 @@ def np_example_to_features(
         num_res = int(np_example["seq_length"][0])
     cfg, feature_names = make_data_config(config, mode=mode, num_res=num_res)
 
+    for key in feature_names:
+        print(key)
     if "deletion_matrix_int" in np_example:
         np_example["deletion_matrix"] = np_example.pop(
             "deletion_matrix_int"
@@ -90,6 +92,7 @@ def np_example_to_features(
     tensor_dict = np_to_tensor_dict(
         np_example=np_example, features=feature_names
     )
+
     with torch.no_grad():
         if is_multimer:
             features = input_pipeline_multimer.process_tensors_from_config(
