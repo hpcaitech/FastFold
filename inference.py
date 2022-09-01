@@ -158,48 +158,48 @@ def main(args):
 
         print("Generating features...")
         local_alignment_dir = os.path.join(alignment_dir, tag)
-        # if global_is_multimer:
-        #     print("Multimer")
-        # else:
-        #     if (args.use_precomputed_alignments is None):
-        #         if not os.path.exists(local_alignment_dir):
-        #             os.makedirs(local_alignment_dir)
-        #         if args.enable_workflow:
-        #             print("Running alignment with ray workflow...")
-        #             alignment_data_workflow_runner = FastFoldDataWorkFlow(
-        #                 jackhmmer_binary_path=args.jackhmmer_binary_path,
-        #                 hhblits_binary_path=args.hhblits_binary_path,
-        #                 hhsearch_binary_path=args.hhsearch_binary_path,
-        #                 uniref90_database_path=args.uniref90_database_path,
-        #                 mgnify_database_path=args.mgnify_database_path,
-        #                 bfd_database_path=args.bfd_database_path,
-        #                 uniclust30_database_path=args.uniclust30_database_path,
-        #                 pdb70_database_path=args.pdb70_database_path,
-        #                 use_small_bfd=use_small_bfd,
-        #                 no_cpus=args.cpus,
-        #             )
-        #             t = time.perf_counter()
-        #             alignment_data_workflow_runner.run(fasta_path, output_dir=output_dir_base, alignment_dir=local_alignment_dir)
-        #             print(f"Alignment data workflow time: {time.perf_counter() - t}")
-        #         else:
-        #             alignment_runner = data_pipeline.AlignmentRunner(
-        #                 jackhmmer_binary_path=args.jackhmmer_binary_path,
-        #                 hhblits_binary_path=args.hhblits_binary_path,
-        #                 hhsearch_binary_path=args.hhsearch_binary_path,
-        #                 uniref90_database_path=args.uniref90_database_path,
-        #                 mgnify_database_path=args.mgnify_database_path,
-        #                 bfd_database_path=args.bfd_database_path,
-        #                 uniclust30_database_path=args.uniclust30_database_path,
-        #                 pdb70_database_path=args.pdb70_database_path,
-        #                 use_small_bfd=use_small_bfd,
-        #                 no_cpus=args.cpus,
-        #             )
-        #             alignment_runner.run(fasta_path, local_alignment_dir)
+        if global_is_multimer:
+            feature_dict = pickle.load(open("/home/lcmql/data/features_pdb1o5d.pkl", "rb"))
+        else:
+            if (args.use_precomputed_alignments is None):
+                if not os.path.exists(local_alignment_dir):
+                    os.makedirs(local_alignment_dir)
+                if args.enable_workflow:
+                    print("Running alignment with ray workflow...")
+                    alignment_data_workflow_runner = FastFoldDataWorkFlow(
+                        jackhmmer_binary_path=args.jackhmmer_binary_path,
+                        hhblits_binary_path=args.hhblits_binary_path,
+                        hhsearch_binary_path=args.hhsearch_binary_path,
+                        uniref90_database_path=args.uniref90_database_path,
+                        mgnify_database_path=args.mgnify_database_path,
+                        bfd_database_path=args.bfd_database_path,
+                        uniclust30_database_path=args.uniclust30_database_path,
+                        pdb70_database_path=args.pdb70_database_path,
+                        use_small_bfd=use_small_bfd,
+                        no_cpus=args.cpus,
+                    )
+                    t = time.perf_counter()
+                    alignment_data_workflow_runner.run(fasta_path, output_dir=output_dir_base, alignment_dir=local_alignment_dir)
+                    print(f"Alignment data workflow time: {time.perf_counter() - t}")
+                else:
+                    alignment_runner = data_pipeline.AlignmentRunner(
+                        jackhmmer_binary_path=args.jackhmmer_binary_path,
+                        hhblits_binary_path=args.hhblits_binary_path,
+                        hhsearch_binary_path=args.hhsearch_binary_path,
+                        uniref90_database_path=args.uniref90_database_path,
+                        mgnify_database_path=args.mgnify_database_path,
+                        bfd_database_path=args.bfd_database_path,
+                        uniclust30_database_path=args.uniclust30_database_path,
+                        pdb70_database_path=args.pdb70_database_path,
+                        use_small_bfd=use_small_bfd,
+                        no_cpus=args.cpus,
+                    )
+                    alignment_runner.run(fasta_path, local_alignment_dir)
 
-        # feature_dict = data_processor.process_fasta(fasta_path=fasta_path,
-        #                                             alignment_dir=local_alignment_dir)
+        feature_dict = data_processor.process_fasta(fasta_path=fasta_path,
+                                                    alignment_dir=local_alignment_dir)
 
-        feature_dict = pickle.load(open("/home/lcmql/data/features_pdb1o5d.pkl", "rb"))
+        # feature_dict = pickle.load(open("/home/lcmql/data/features_pdb1o5d.pkl", "rb"))
         # Remove temporary FASTA file
         os.remove(fasta_path)
 
