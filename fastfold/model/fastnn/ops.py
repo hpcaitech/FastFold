@@ -281,23 +281,21 @@ class ChunkTriangleMultiplicationOutgoing(nn.Module):
         for i in range(0, para_dim, chunk_size):
             zi = Z_raw[:, i:i + chunk_size, :, :]
             zi = self.layernorm1(zi)
+            gi = torch.sigmoid(self.left_right_gate(zi))
             i_left_right_proj_act = self.left_right_projection(zi)
             i_left_right_proj_act = Z_mask_row[:, i:i + chunk_size, :].unsqueeze(-1) * i_left_right_proj_act
+            i_left_right_proj_act *= gi
+            left_proj_act, _ = i_left_right_proj_act.chunk(2, dim=-1)
+            left_proj_act = permute_final_dims(left_proj_act, (2, 0, 1))
             
             for j in range(0, para_dim, chunk_size):
-                
-                zij = Z_raw[:, i:i + chunk_size, j:j + chunk_size, :]
-                g = torch.sigmoid(self.left_right_gate(zij))
-                
-                ij_left_right_proj_act = i_left_right_proj_act * torch.sum(g, dim=2).unsqueeze(-2)
-                left_proj_act, _ = ij_left_right_proj_act.chunk(2, dim=-1)
-                left_proj_act = permute_final_dims(left_proj_act, (2, 0, 1))
-                
+                                
                 zj = Z_raw[:, j:j + chunk_size, :, :]
                 zj = self.layernorm1(zj)
+                gj = torch.sigmoid(self.left_right_gate(zj))
                 j_left_right_proj_act = self.left_right_projection(zj)
                 j_left_right_proj_act = Z_mask_row[:, j:j + chunk_size, :].unsqueeze(-1) * j_left_right_proj_act
-                j_left_right_proj_act *= torch.sum(g, dim=1).unsqueeze(-2)
+                j_left_right_proj_act *= gj
                 _, right_proj_act = j_left_right_proj_act.chunk(2, dim=-1)
                 
                 p = torch.matmul(
@@ -353,23 +351,21 @@ class ChunkTriangleMultiplicationIncoming(nn.Module):
         for i in range(0, para_dim, chunk_size):
             zi = Z_raw[:, i:i + chunk_size, :, :]
             zi = self.layernorm1(zi)
+            gi = torch.sigmoid(self.left_right_gate(zi))
             i_left_right_proj_act = self.left_right_projection(zi)
             i_left_right_proj_act = Z_mask_col[:, i:i + chunk_size, :].unsqueeze(-1) * i_left_right_proj_act
+            i_left_right_proj_act *= gi
+            left_proj_act, _ = i_left_right_proj_act.chunk(2, dim=-1)
+            left_proj_act = permute_final_dims(left_proj_act, (2, 1, 0))
             
             for j in range(0, para_dim, chunk_size):
-                
-                zij = Z_raw[:, i:i + chunk_size, j:j + chunk_size, :]
-                g = torch.sigmoid(self.left_right_gate(zij))
-                
-                ij_left_right_proj_act = i_left_right_proj_act * torch.sum(g, dim=2).unsqueeze(-2)
-                left_proj_act, _ = ij_left_right_proj_act.chunk(2, dim=-1)
-                left_proj_act = permute_final_dims(left_proj_act, (2, 1, 0))
-                
+                                
                 zj = Z_raw[:, j:j + chunk_size, :, :]
                 zj = self.layernorm1(zj)
+                gj = torch.sigmoid(self.left_right_gate(zj))
                 j_left_right_proj_act = self.left_right_projection(zj)
                 j_left_right_proj_act = Z_mask_col[:, j:j + chunk_size, :].unsqueeze(-1) * j_left_right_proj_act
-                j_left_right_proj_act *= torch.sum(g, dim=1).unsqueeze(-2)
+                j_left_right_proj_act *= gj
                 _, right_proj_act = j_left_right_proj_act.chunk(2, dim=-1)
                 
                 p = torch.matmul(
