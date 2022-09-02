@@ -294,8 +294,6 @@ def make_msa_profile(batch):
     """Compute the MSA profile."""
 
     # Compute the profile for every residue (over all MSA sequences).
-    for k,v in batch.items():
-        print(k, v.shape)
     batch["msa_profile"] = masked_mean(
         batch['msa_mask'][..., None], 
         torch.nn.functional.one_hot(batch['msa'], 22), 

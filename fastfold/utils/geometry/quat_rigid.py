@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from fastfold.model.primitives import Linear
+from fastfold.model.nn.primitives import Linear
 from fastfold.utils.geometry.rigid_matrix_vector import Rigid3Array
 from fastfold.utils.geometry.rotation_matrix import Rot3Array
 from fastfold.utils.geometry.vector import Vec3Array

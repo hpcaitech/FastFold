@@ -16,7 +16,7 @@
 import math
 import torch
 import torch.nn as nn
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 from fastfold.model.nn.primitives import Linear, LayerNorm, ipa_point_weights_init_
 from fastfold.common.residue_constants import (
