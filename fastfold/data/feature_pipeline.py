@@ -82,8 +82,6 @@ def np_example_to_features(
         num_res = int(np_example["seq_length"][0])
     cfg, feature_names = make_data_config(config, mode=mode, num_res=num_res)
 
-    for key in feature_names:
-        print(key)
     if "deletion_matrix_int" in np_example:
         np_example["deletion_matrix"] = np_example.pop(
             "deletion_matrix_int"
