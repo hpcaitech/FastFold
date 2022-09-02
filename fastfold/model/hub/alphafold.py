@@ -26,12 +26,12 @@ from fastfold.utils.feats import (
 )
 from fastfold.model.nn.embedders import (
     InputEmbedder,
-    InputEmbedderMultimer,
     RecyclingEmbedder,
     TemplateAngleEmbedder,
     TemplatePairEmbedder,
     ExtraMSAEmbedder,
 )
+from fastfold.model.nn.embedders_multimer import TemplateEmbedderMultimer, InputEmbedderMultimer
 from fastfold.model.nn.evoformer import EvoformerStack, ExtraMSAStack
 from fastfold.model.nn.heads import AuxiliaryHeads
 import fastfold.common.residue_constants as residue_constants
@@ -74,25 +74,31 @@ class AlphaFold(nn.Module):
             self.input_embedder = InputEmbedderMultimer(
                 **config["input_embedder"],
             )
+            self.template_embedder = TemplateEmbedderMultimer(
+                template_config,
+            )
         else:   
             self.input_embedder = InputEmbedder(
                 **config["input_embedder"],
             )
-        self.recycling_embedder = RecyclingEmbedder(
-            **config["recycling_embedder"],
-        )
-        self.template_angle_embedder = TemplateAngleEmbedder(
+            self.template_angle_embedder = TemplateAngleEmbedder(
             **template_config["template_angle_embedder"],
-        )
-        self.template_pair_embedder = TemplatePairEmbedder(
-            **template_config["template_pair_embedder"],
-        )
-        self.template_pair_stack = TemplatePairStack(
-            **template_config["template_pair_stack"],
-        )
-        self.template_pointwise_att = TemplatePointwiseAttention(
-            **template_config["template_pointwise_attention"],
-        )
+            )
+            self.template_pair_embedder = TemplatePairEmbedder(
+                **template_config["template_pair_embedder"],
+            )
+            self.template_pair_stack = TemplatePairStack(
+                **template_config["template_pair_stack"],
+            )
+            self.template_pointwise_att = TemplatePointwiseAttention(
+                **template_config["template_pointwise_attention"],
+            )
+            self.recycling_embedder = RecyclingEmbedder(
+                **config["recycling_embedder"],
+            )
+
+
+
         self.extra_msa_embedder = ExtraMSAEmbedder(
             **extra_msa_config["extra_msa_embedder"],
         )
@@ -103,6 +109,7 @@ class AlphaFold(nn.Module):
             **config["evoformer_stack"],
         )
         self.structure_module = StructureModule(
+            is_multimer=self.globals.is_multimer,
             **config["structure_module"],
         )
 
