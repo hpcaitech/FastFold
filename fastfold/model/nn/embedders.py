@@ -17,9 +17,20 @@ import torch
 import torch.nn as nn
 from typing import Tuple, Dict
 
+from functools import partial
+from fastfold.utils import all_atom_multimer
+from fastfold.utils.feats import (
+    build_template_angle_feat,
+    build_template_pair_feat,
+)
 from fastfold.model.nn.primitives import Linear, LayerNorm
 from fastfold.utils.tensor_utils import one_hot
-
+from fastfold.model.nn.template import (
+    TemplatePairStack,
+    TemplatePointwiseAttention,
+)
+from fastfold.utils import geometry
+from fastfold.utils.tensor_utils import one_hot, tensor_tree_map, dict_multimap
 
 class InputEmbedder(nn.Module):
     """
@@ -220,6 +231,97 @@ class RecyclingEmbedder(nn.Module):
         z_update = d + self.layer_norm_z(z)
 
         return m_update, z_update
+
+class TemplateEmbedder(nn.Module):
+    def __init__(self, config):
+        super(TemplateEmbedder, self).__init__()
+        
+        self.config = config
+        self.template_angle_embedder = TemplateAngleEmbedder(
+            **config["template_angle_embedder"],
+        )
+        self.template_pair_embedder = TemplatePairEmbedder(
+            **config["template_pair_embedder"],
+        )
+        self.template_pair_stack = TemplatePairStack(
+            **config["template_pair_stack"],
+        )
+        self.template_pointwise_att = TemplatePointwiseAttention(
+            **config["template_pointwise_attention"],
+        )
+    
+    def forward(self, 
+        batch, 
+        z, 
+        pair_mask, 
+        templ_dim, 
+        chunk_size, 
+        _mask_trans=True
+    ):
+        # Embed the templates one at a time (with a poor man's vmap)
+        template_embeds = []
+        n_templ = batch["template_aatype"].shape[templ_dim]
+        for i in range(n_templ):
+            idx = batch["template_aatype"].new_tensor(i)
+            single_template_feats = tensor_tree_map(
+                lambda t: torch.index_select(t, templ_dim, idx),
+                batch,
+            )
+
+            single_template_embeds = {}
+            if self.config.embed_angles:
+                template_angle_feat = build_template_angle_feat(
+                    single_template_feats,
+                )
+
+                # [*, S_t, N, C_m]
+                a = self.template_angle_embedder(template_angle_feat)
+
+                single_template_embeds["angle"] = a
+
+            # [*, S_t, N, N, C_t]
+            t = build_template_pair_feat(
+                single_template_feats,
+                use_unit_vector=self.config.use_unit_vector,
+                inf=self.config.inf,
+                eps=self.config.eps,
+                **self.config.distogram,
+            ).to(z.dtype)
+            t = self.template_pair_embedder(t)
+
+            single_template_embeds.update({"pair": t})
+
+            template_embeds.append(single_template_embeds)
+
+        template_embeds = dict_multimap(
+            partial(torch.cat, dim=templ_dim),
+            template_embeds,
+        )
+
+        # [*, S_t, N, N, C_z]
+        t = self.template_pair_stack(
+            template_embeds["pair"], 
+            pair_mask.unsqueeze(-3).to(dtype=z.dtype), 
+            chunk_size=chunk_size,
+            _mask_trans=_mask_trans,
+        )
+
+        # [*, N, N, C_z]
+        t = self.template_pointwise_att(
+            t, 
+            z, 
+            template_mask=batch["template_mask"].to(dtype=z.dtype),
+            chunk_size=chunk_size,
+        )
+        t = t * (torch.sum(batch["template_mask"]) > 0)
+
+        ret = {}
+        if self.config.embed_angles:
+            ret["template_single_embedding"] = template_embeds["angle"]
+
+        ret.update({"template_pair_embedding": t})
+
+        return ret
 
 
 class TemplateAngleEmbedder(nn.Module):

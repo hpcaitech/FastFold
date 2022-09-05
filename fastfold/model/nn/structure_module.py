@@ -16,7 +16,7 @@
 import math
 import torch
 import torch.nn as nn
-from typing import Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 from fastfold.model.nn.primitives import Linear, LayerNorm, ipa_point_weights_init_
 from fastfold.common.residue_constants import (
@@ -73,7 +73,9 @@ class AngleResnet(nn.Module):
     Implements Algorithm 20, lines 11-14
     """
 
-    def __init__(self, c_in, c_hidden, no_blocks, no_angles, epsilon):
+    def __init__(
+        self, c_in: int, c_hidden: int, no_blocks: int, no_angles: int, epsilon: float
+    ):        
         """
         Args:
             c_in:
@@ -145,13 +147,14 @@ class AngleResnet(nn.Module):
         unnormalized_s = s
         norm_denom = torch.sqrt(
             torch.clamp(
-                torch.sum(s ** 2, dim=-1, keepdim=True),
+                torch.sum(s**2, dim=-1, keepdim=True),
                 min=self.eps,
             )
         )
         s = s / norm_denom
 
         return unnormalized_s, s
+
 
 class PointProjection(nn.Module):
     def __init__(
@@ -491,7 +494,7 @@ class BackboneUpdate(nn.Module):
     Implements part of Algorithm 23.
     """
 
-    def __init__(self, c_s):
+    def __init__(self, c_s: int):
         """
         Args:
             c_s:
@@ -517,7 +520,7 @@ class BackboneUpdate(nn.Module):
 
 
 class StructureModuleTransitionLayer(nn.Module):
-    def __init__(self, c):
+    def __init__(self, c: int):
         super(StructureModuleTransitionLayer, self).__init__()
 
         self.c = c
@@ -528,7 +531,7 @@ class StructureModuleTransitionLayer(nn.Module):
 
         self.relu = nn.ReLU()
 
-    def forward(self, s):
+    def forward(self, s: torch.Tensor):
         s_initial = s
         s = self.linear_1(s)
         s = self.relu(s)
@@ -542,7 +545,7 @@ class StructureModuleTransitionLayer(nn.Module):
 
 
 class StructureModuleTransition(nn.Module):
-    def __init__(self, c, num_layers, dropout_rate):
+    def __init__(self, c: int, num_layers: int, dropout_rate: float):
         super(StructureModuleTransition, self).__init__()
 
         self.c = c
@@ -557,7 +560,7 @@ class StructureModuleTransition(nn.Module):
         self.dropout = nn.Dropout(self.dropout_rate)
         self.layer_norm = LayerNorm(self.c)
 
-    def forward(self, s):
+    def forward(self, s: torch.Tensor) -> torch.Tensor:
         for l in self.layers:
             s = l(s)
 
@@ -570,22 +573,22 @@ class StructureModuleTransition(nn.Module):
 class StructureModule(nn.Module):
     def __init__(
         self,
-        c_s,
-        c_z,
-        c_ipa,
-        c_resnet,
-        no_heads_ipa,
-        no_qk_points,
-        no_v_points,
-        dropout_rate,
-        no_blocks,
-        no_transition_layers,
-        no_resnet_blocks,
-        no_angles,
-        trans_scale_factor,
-        epsilon,
-        inf,
-        is_multimer=False,
+        c_s: int,
+        c_z: int,
+        c_ipa: int,
+        c_resnet: int,
+        no_heads_ipa: int,
+        no_qk_points: int,
+        no_v_points: int,
+        dropout_rate: float,
+        no_blocks: int,
+        no_transition_layers: int,
+        no_resnet_blocks: int,
+        no_angles: int,
+        trans_scale_factor: float,
+        epsilon: float,
+        inf: float,
+        is_multimer: bool = False,
         **kwargs,
     ):
         """
@@ -621,6 +624,8 @@ class StructureModule(nn.Module):
                 Small number used in angle resnet normalization
             inf:
                 Large number used for attention masking
+            is_multimer:
+                whether running under multimer mode
         """
         super(StructureModule, self).__init__()
 
@@ -673,7 +678,10 @@ class StructureModule(nn.Module):
             self.dropout_rate,
         )
 
-        self.bb_update = BackboneUpdate(self.c_s)
+        if is_multimer:
+            self.bb_update = QuatRigid(self.c_s, full_quat=False)
+        else:
+            self.bb_update = BackboneUpdate(self.c_s)
 
         self.angle_resnet = AngleResnet(
             self.c_s,
@@ -683,13 +691,13 @@ class StructureModule(nn.Module):
             self.epsilon,
         )
 
-    def forward(
+    def _forward_monomer(
         self,
-        s,
-        z,
-        aatype,
-        mask=None,
-    ):
+        s: torch.Tensor,
+        z: torch.Tensor,
+        aatype: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> Dict[str, Any]:
         """
         Args:
             s:
@@ -785,7 +793,103 @@ class StructureModule(nn.Module):
 
         return outputs
 
-    def _init_residue_constants(self, float_dtype, device):
+    def _forward_multimer(
+        self,
+        s: torch.Tensor,
+        z: torch.Tensor,
+        aatype: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> Dict[str, Any]:
+        if mask is None:
+            # [*, N]
+            mask = s.new_ones(s.shape[:-1])
+
+        # [*, N, C_s]
+        s = self.layer_norm_s(s)
+
+        # [*, N, N, C_z]
+        z = self.layer_norm_z(z)
+
+        # [*, N, C_s]
+        s_initial = s
+        s = self.linear_in(s)
+
+        # [*, N]
+        rigids = Rigid3Array.identity(
+            s.shape[:-1],
+            s.device,
+        )
+        outputs = []
+        for i in range(self.no_blocks):
+            # [*, N, C_s]
+            s = s + self.ipa(s, z, rigids, mask)
+            s = self.ipa_dropout(s)
+            s = self.layer_norm_ipa(s)
+            s = self.transition(s)
+
+            # [*, N]
+            rigids = rigids @ self.bb_update(s)
+
+            # [*, N, 7, 2]
+            unnormalized_angles, angles = self.angle_resnet(s, s_initial)
+
+            all_frames_to_global = self.torsion_angles_to_frames(
+                rigids.scale_translation(self.trans_scale_factor),
+                angles,
+                aatype,
+            )
+
+            pred_xyz = self.frames_and_literature_positions_to_atom14_pos(
+                all_frames_to_global,
+                aatype,
+            )
+
+            preds = {
+                "frames": rigids.scale_translation(self.trans_scale_factor).to_tensor(),
+                "sidechain_frames": all_frames_to_global.to_tensor_4x4(),
+                "unnormalized_angles": unnormalized_angles,
+                "angles": angles,
+                "positions": pred_xyz.to_tensor(),
+            }
+
+            outputs.append(preds)
+
+            if i < (self.no_blocks - 1):
+                rigids = rigids.stop_rot_gradient()
+
+        outputs = dict_multimap(torch.stack, outputs)
+        outputs["single"] = s
+
+        return outputs
+
+    def forward(
+        self,
+        s: torch.Tensor,
+        z: torch.Tensor,
+        aatype: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ):
+        """
+        Args:
+            s:
+                [*, N_res, C_s] single representation
+            z:
+                [*, N_res, N_res, C_z] pair representation
+            aatype:
+                [*, N_res] amino acid indices
+            mask:
+                Optional [*, N_res] sequence mask
+        Returns:
+            A dictionary of outputs
+        """
+        if self.is_multimer:
+            outputs = self._forward_multimer(s, z, aatype, mask)
+        else:
+            outputs = self._forward_monomer(s, z, aatype, mask)
+
+        return outputs
+
+    def _init_residue_constants(self, float_dtype: torch.dtype, device: torch.device):
         if self.default_frames is None:
             self.default_frames = torch.tensor(
                 restype_rigid_group_default_frame,
@@ -814,17 +918,24 @@ class StructureModule(nn.Module):
                 requires_grad=False,
             )
 
-    def torsion_angles_to_frames(self, r, alpha, f):
+    def torsion_angles_to_frames(
+        self, r: Union[Rigid, Rigid3Array], alpha: torch.Tensor, f
+    ):
         # Lazily initialize the residue constants on the correct device
         self._init_residue_constants(alpha.dtype, alpha.device)
         # Separated purely to make testing less annoying
         return torsion_angles_to_frames(r, alpha, f, self.default_frames)
 
     def frames_and_literature_positions_to_atom14_pos(
-        self, r, f  # [*, N, 8]  # [*, N]
+        self, r: Union[Rigid, Rigid3Array], f  # [*, N, 8]  # [*, N]
     ):
         # Lazily initialize the residue constants on the correct device
-        self._init_residue_constants(r.get_rots().dtype, r.get_rots().device)
+        if type(r) == Rigid:
+            self._init_residue_constants(r.get_rots().dtype, r.get_rots().device)
+        elif type(r) == Rigid3Array:
+            self._init_residue_constants(r.dtype, r.device)
+        else:
+            raise ValueError("Unknown rigid type")
         return frames_and_literature_positions_to_atom14_pos(
             r,
             f,

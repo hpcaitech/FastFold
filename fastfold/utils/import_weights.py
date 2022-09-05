@@ -324,9 +324,7 @@ def get_translation_dict(model, is_multimer: bool = False):
             "msa_row_attention_with_pair_bias": MSAAttPairBiasParams(b.msa_att_row),
             col_att_name: msa_col_att_params,
             "msa_transition": MSATransitionParams(b.core.msa_transition),
-            "outer_product_mean": OuterProductMeanParams(b.outer_product_mean)
-            if is_multimer
-            else OuterProductMeanParams(b.core.outer_product_mean),
+            "outer_product_mean": OuterProductMeanParams(b.core.outer_product_mean),
             "triangle_multiplication_outgoing": TriMulOutParams(b.core.tri_mul_out),
             "triangle_multiplication_incoming": TriMulInParams(b.core.tri_mul_in),
             "triangle_attention_starting_node": TriAttParams(b.core.tri_att_start),
@@ -369,7 +367,7 @@ def get_translation_dict(model, is_multimer: bool = False):
     ############################
     # translations dict overflow
     ############################
-    tps_blocks = model.template_pair_stack.blocks
+    tps_blocks = model.template_embedder.template_pair_stack.blocks
     tps_blocks_params = stacked([TemplatePairBlockParams(b) for b in tps_blocks])
 
     ems_blocks = model.extra_msa_stack.blocks
@@ -396,26 +394,26 @@ def get_translation_dict(model, is_multimer: bool = False):
                 "template_embedding": {
                     "single_template_embedding": {
                         "embedding2d": LinearParams(
-                            model.template_pair_embedder.linear
+                            model.template_embedder.template_pair_embedder.linear
                         ),
                         "template_pair_stack": {
                             "__layer_stack_no_state": tps_blocks_params,
                         },
                         "output_layer_norm": LayerNormParams(
-                            model.template_pair_stack.layer_norm
+                            model.template_embedder.template_pair_stack.layer_norm
                         ),
                     },
                     "attention": AttentionParams(
-                        model.template_pointwise_att.mha
+                        model.template_embedder.template_pointwise_att.mha
                     ),
                 },
                 "extra_msa_activations": LinearParams(model.extra_msa_embedder.linear),
                 "extra_msa_stack": ems_blocks_params,
                 "template_single_embedding": LinearParams(
-                    model.template_angle_embedder.linear_1
+                    model.template_embedder.template_angle_embedder.linear_1
                 ),
                 "template_projection": LinearParams(
-                    model.template_angle_embedder.linear_2
+                    model.template_embedder.template_angle_embedder.linear_2
                 ),
                 "evoformer_iteration": evo_blocks_params,
                 "single_activations": LinearParams(model.evoformer.linear),

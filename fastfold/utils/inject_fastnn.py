@@ -266,7 +266,7 @@ def inject_extraMsaBlock(model):
 
 def inject_templatePairBlock(model):
     with torch.no_grad():
-        target_module = model.template_pair_stack.blocks
+        target_module = model.template_embedder.template_pair_stack.blocks
         fastfold_blocks = nn.ModuleList()
         for block_id, ori_block in enumerate(target_module):
             c_t = ori_block.c_t
@@ -294,7 +294,7 @@ def inject_templatePairBlock(model):
                 fastfold_block.eval()
             fastfold_blocks.append(fastfold_block)
 
-        model.template_pair_stack.blocks = fastfold_blocks
+        model.template_embedder.template_pair_stack.blocks = fastfold_blocks
 
 
 def inject_fastnn(model):

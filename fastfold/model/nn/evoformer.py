@@ -84,7 +84,6 @@ class MSATransition(nn.Module):
              no_batch_dims=len(m.shape[:-2]),
          )
 
-
     def forward(
         self,
         m: torch.Tensor,
@@ -101,10 +100,12 @@ class MSATransition(nn.Module):
             m:
                 [*, N_seq, N_res, C_m] MSA activation update
         """
+
         # DISCREPANCY: DeepMind forgets to apply the MSA mask here.
         if mask is None:
             mask = m.new_ones(m.shape[:-1])
 
+        # [*, N_seq, N_res, 1]
         mask = mask.unsqueeze(-1)
 
         m = self.layer_norm(m)
@@ -132,9 +133,10 @@ class EvoformerBlockCore(nn.Module):
         inf: float,
         eps: float,
         _is_extra_msa_stack: bool = False,
+        is_multimer: bool = False,
     ):
         super(EvoformerBlockCore, self).__init__()
-
+        self.is_multimer = is_multimer
         self.msa_transition = MSATransition(
             c_m=c_m,
             n=transition_n,
@@ -259,6 +261,12 @@ class EvoformerBlock(nn.Module):
             pair_dropout=pair_dropout,
             inf=inf,
             eps=eps,
+        )
+        
+        self.outer_product_mean = OuterProductMean(
+            c_m,
+            c_z,
+            c_hidden_opm,
         )
 
     def forward(self,
