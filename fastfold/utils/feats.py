@@ -18,10 +18,12 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
-from typing import Dict
+from typing import Any, Dict, Optional, Tuple, Union
 
 from fastfold.common import protein
 import fastfold.common.residue_constants as rc
+from fastfold.utils.geometry.rigid_matrix_vector import Rigid3Array
+from fastfold.utils.geometry.rotation_matrix import Rot3Array
 from fastfold.utils.rigid_utils import Rotation, Rigid
 from fastfold.utils.tensor_utils import (
     batched_gather,
@@ -36,7 +38,7 @@ def dgram_from_positions(
     max_bin: float = 50.75, 
     no_bins: float = 39, 
     inf: float = 1e8,
-):
+) -> torch.Tensor:
     dgram = torch.sum(
         (pos[..., None, :] - pos[..., None, :, :]) ** 2, dim=-1, keepdim=True
     )
@@ -46,8 +48,9 @@ def dgram_from_positions(
 
     return dgram
 
-
-def pseudo_beta_fn(aatype, all_atom_positions, all_atom_masks):
+def pseudo_beta_fn(
+    aatype, all_atom_positions: torch.Tensor, all_atom_masks: torch.Tensor
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     is_gly = aatype == rc.restype_order["G"]
     ca_idx = rc.atom_order["CA"]
     cb_idx = rc.atom_order["CB"]
@@ -65,10 +68,10 @@ def pseudo_beta_fn(aatype, all_atom_positions, all_atom_masks):
         )
         return pseudo_beta, pseudo_beta_mask
     else:
-        return pseudo_beta
+        return pseudo_beta, None
 
 
-def atom14_to_atom37(atom14, batch):
+def atom14_to_atom37(atom14, batch: Dict[str, Any]):
     atom37_data = batched_gather(
         atom14,
         batch["residx_atom37_to_atom14"],
@@ -81,19 +84,15 @@ def atom14_to_atom37(atom14, batch):
     return atom37_data
 
 
-def build_template_angle_feat(template_feats):
+def build_template_angle_feat(template_feats: Dict[str, Any]) -> torch.Tensor:
     template_aatype = template_feats["template_aatype"]
     torsion_angles_sin_cos = template_feats["template_torsion_angles_sin_cos"]
-    alt_torsion_angles_sin_cos = template_feats[
-        "template_alt_torsion_angles_sin_cos"
-    ]
+    alt_torsion_angles_sin_cos = template_feats["template_alt_torsion_angles_sin_cos"]
     torsion_angles_mask = template_feats["template_torsion_angles_mask"]
     template_angle_feat = torch.cat(
         [
             nn.functional.one_hot(template_aatype, 22),
-            torsion_angles_sin_cos.reshape(
-                *torsion_angles_sin_cos.shape[:-2], 14
-            ),
+            torsion_angles_sin_cos.reshape(*torsion_angles_sin_cos.shape[:-2], 14),
             alt_torsion_angles_sin_cos.reshape(
                 *alt_torsion_angles_sin_cos.shape[:-2], 14
             ),
@@ -106,22 +105,20 @@ def build_template_angle_feat(template_feats):
 
 
 def build_template_pair_feat(
-    batch, 
-    min_bin, max_bin, no_bins, 
-    use_unit_vector=False, 
-    eps=1e-20, inf=1e8
+    batch: Dict[str, Any],
+    min_bin: float,
+    max_bin: float,
+    no_bins: int,
+    use_unit_vector: bool = False,
+    eps: float = 1e-20,
+    inf: float = 1e8,
 ):
     template_mask = batch["template_pseudo_beta_mask"]
     template_mask_2d = template_mask[..., None] * template_mask[..., None, :]
 
     # Compute distogram (this seems to differ slightly from Alg. 5)
     tpb = batch["template_pseudo_beta"]
-    dgram = torch.sum(
-        (tpb[..., None, :] - tpb[..., None, :, :]) ** 2, dim=-1, keepdim=True
-    )
-    lower = torch.linspace(min_bin, max_bin, no_bins, device=tpb.device) ** 2
-    upper = torch.cat([lower[1:], lower.new_tensor([inf])], dim=-1)
-    dgram = ((dgram > lower) * (dgram < upper)).type(dgram.dtype)
+    dgram = dgram_from_positions(tpb, min_bin, max_bin, no_bins, inf)
 
     to_concat = [dgram, template_mask_2d[..., None]]
 
@@ -137,9 +134,7 @@ def build_template_pair_feat(
         )
     )
     to_concat.append(
-        aatype_one_hot[..., None, :].expand(
-            *aatype_one_hot.shape[:-2], -1, n_res, -1
-        )
+        aatype_one_hot[..., None, :].expand(*aatype_one_hot.shape[:-2], -1, n_res, -1)
     )
 
     n, ca, c = [rc.atom_order[a] for a in ["N", "CA", "C"]]
@@ -152,19 +147,17 @@ def build_template_pair_feat(
     points = rigids.get_trans()[..., None, :, :]
     rigid_vec = rigids[..., None].invert_apply(points)
 
-    inv_distance_scalar = torch.rsqrt(eps + torch.sum(rigid_vec ** 2, dim=-1))
+    inv_distance_scalar = torch.rsqrt(eps + torch.sum(rigid_vec**2, dim=-1))
 
     t_aa_masks = batch["template_all_atom_mask"]
-    template_mask = (
-        t_aa_masks[..., n] * t_aa_masks[..., ca] * t_aa_masks[..., c]
-    )
+    template_mask = t_aa_masks[..., n] * t_aa_masks[..., ca] * t_aa_masks[..., c]
     template_mask_2d = template_mask[..., None] * template_mask[..., None, :]
 
     inv_distance_scalar = inv_distance_scalar * template_mask_2d
     unit_vector = rigid_vec * inv_distance_scalar[..., None]
 
-    if(not use_unit_vector):
-        unit_vector = unit_vector * 0.
+    if not use_unit_vector:
+        unit_vector = unit_vector * 0.0
 
     to_concat.extend(torch.unbind(unit_vector[..., None, :], dim=-1))
     to_concat.append(template_mask_2d[..., None])
@@ -175,7 +168,7 @@ def build_template_pair_feat(
     return act
 
 
-def build_extra_msa_feat(batch):
+def build_extra_msa_feat(batch: Dict[str, Any]) -> torch.Tensor:
     msa_1hot = nn.functional.one_hot(batch["extra_msa"], 23)
     msa_feat = [
         msa_1hot,
@@ -186,11 +179,11 @@ def build_extra_msa_feat(batch):
 
 
 def torsion_angles_to_frames(
-    r: Rigid,
+    r: Union[Rigid3Array, Rigid],
     alpha: torch.Tensor,
     aatype: torch.Tensor,
     rrgdf: torch.Tensor,
-):
+) -> Union[Rigid, Rigid3Array]:
     # [*, N, 8, 4, 4]
     default_4x4 = rrgdf[aatype, ...]
 
@@ -203,9 +196,7 @@ def torsion_angles_to_frames(
     bb_rot[..., 1] = 1
 
     # [*, N, 8, 2]
-    alpha = torch.cat(
-        [bb_rot.expand(*alpha.shape[:-2], -1, -1), alpha], dim=-2
-    )
+    alpha = torch.cat([bb_rot.expand(*alpha.shape[:-2], -1, -1), alpha], dim=-2)
 
     # [*, N, 8, 3, 3]
     # Produces rotation matrices of the form:
@@ -216,16 +207,26 @@ def torsion_angles_to_frames(
     # ]
     # This follows the original code rather than the supplement, which uses
     # different indices.
+    if type(r) == Rigid3Array:
+        all_rots = alpha.new_zeros(default_r.shape + (3, 3))
+    elif type(r) == Rigid:
+        all_rots = alpha.new_zeros(default_r.get_rots().get_rot_mats().shape)
+    else:
+        raise TypeError(f"Wrong type of Rigid: {type(r)}")
 
-    all_rots = alpha.new_zeros(default_r.get_rots().get_rot_mats().shape)
     all_rots[..., 0, 0] = 1
     all_rots[..., 1, 1] = alpha[..., 1]
     all_rots[..., 1, 2] = -alpha[..., 0]
     all_rots[..., 2, 1:] = alpha
 
-    all_rots = Rigid(Rotation(rot_mats=all_rots), None)
-
-    all_frames = default_r.compose(all_rots)
+    if type(r) == Rigid3Array:
+        all_rots = Rot3Array.from_array(all_rots)
+        all_frames = default_r.compose_rotation(all_rots)
+    elif type(r) == Rigid:
+        all_rots = Rigid(Rotation(rot_mats=all_rots), None)
+        all_frames = default_r.compose(all_rots)
+    else:
+        raise TypeError(f"Wrong type of Rigid: {type(r)}")
 
     chi2_frame_to_frame = all_frames[..., 5]
     chi3_frame_to_frame = all_frames[..., 6]
@@ -236,15 +237,26 @@ def torsion_angles_to_frames(
     chi3_frame_to_bb = chi2_frame_to_bb.compose(chi3_frame_to_frame)
     chi4_frame_to_bb = chi3_frame_to_bb.compose(chi4_frame_to_frame)
 
-    all_frames_to_bb = Rigid.cat(
-        [
-            all_frames[..., :5],
-            chi2_frame_to_bb.unsqueeze(-1),
-            chi3_frame_to_bb.unsqueeze(-1),
-            chi4_frame_to_bb.unsqueeze(-1),
-        ],
-        dim=-1,
-    )
+    if type(all_frames) == Rigid3Array:
+        all_frames_to_bb = Rigid3Array.cat(
+            [
+                all_frames[..., :5],
+                chi2_frame_to_bb.unsqueeze(-1),
+                chi3_frame_to_bb.unsqueeze(-1),
+                chi4_frame_to_bb.unsqueeze(-1),
+            ],
+            dim=-1,
+        )
+    elif type(all_frames) == Rigid:
+        all_frames_to_bb = Rigid.cat(
+            [
+                all_frames[..., :5],
+                chi2_frame_to_bb.unsqueeze(-1),
+                chi3_frame_to_bb.unsqueeze(-1),
+                chi4_frame_to_bb.unsqueeze(-1),
+            ],
+            dim=-1,
+        )
 
     all_frames_to_global = r[..., None].compose(all_frames_to_bb)
 
@@ -252,13 +264,13 @@ def torsion_angles_to_frames(
 
 
 def frames_and_literature_positions_to_atom14_pos(
-    r: Rigid,
+    r: Union[Rigid3Array, Rigid],
     aatype: torch.Tensor,
-    default_frames,
-    group_idx,
-    atom_mask,
-    lit_positions,
-):
+    default_frames: torch.Tensor,
+    group_idx: torch.Tensor,
+    atom_mask: torch.Tensor,
+    lit_positions: torch.Tensor,
+) -> torch.Tensor:
     # [*, N, 14, 4, 4]
     default_4x4 = default_frames[aatype, ...]
 
@@ -266,21 +278,30 @@ def frames_and_literature_positions_to_atom14_pos(
     group_mask = group_idx[aatype, ...]
 
     # [*, N, 14, 8]
-    group_mask = nn.functional.one_hot(
-        group_mask,
-        num_classes=default_frames.shape[-3],
-    )
+    if type(r) == Rigid3Array:
+        group_mask = nn.functional.one_hot(
+            group_mask.long(),
+            num_classes=default_frames.shape[-3],
+        )
+    elif type(r) == Rigid:
+        group_mask = nn.functional.one_hot(
+            group_mask,
+            num_classes=default_frames.shape[-3],
+        )
+    else:
+        raise TypeError(f"Wrong type of Rigid: {type(r)}")
 
     # [*, N, 14, 8]
     t_atoms_to_global = r[..., None, :] * group_mask
 
     # [*, N, 14]
-    t_atoms_to_global = t_atoms_to_global.map_tensor_fn(
-        lambda x: torch.sum(x, dim=-1)
-    )
+    t_atoms_to_global = t_atoms_to_global.map_tensor_fn(lambda x: torch.sum(x, dim=-1))
 
     # [*, N, 14, 1]
-    atom_mask = atom_mask[aatype, ...].unsqueeze(-1)
+    if type(r) == Rigid:
+        atom_mask = atom_mask[aatype, ...].unsqueeze(-1)
+    elif type(r) == Rigid3Array:
+        atom_mask = atom_mask[aatype, ...]
 
     # [*, N, 14, 3]
     lit_positions = lit_positions[aatype, ...]

@@ -159,7 +159,7 @@ def main(args):
         print("Generating features...")
         local_alignment_dir = os.path.join(alignment_dir, tag)
         if global_is_multimer:
-            print("multimer mode")
+            print("running in multimer mode...")
             feature_dict = pickle.load(open("/home/lcmql/data/features_pdb1o5d.pkl", "rb"))
         else:
             if (args.use_precomputed_alignments is None):
