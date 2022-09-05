@@ -7,7 +7,7 @@ from fastfold.model.fastnn.kernel import LayerNorm
 
 from .initializer import glorot_uniform_af
 
-from fastfold.model.fastnn.kernel import bias_sigmod_ele, bias_ele_dropout_residual
+from fastfold.model.fastnn.kernel import bias_sigmod_ele, bias_ele_dropout_residual, bias_dropout_add
 from fastfold.distributed import gather, scatter
 from fastfold.distributed.comm_async import gather_async, gather_async_opp, get_world_size, get_rank, broadcast_sync, broadcast_async, broadcast_async_opp
 
@@ -209,9 +209,12 @@ class SelfAttention(nn.Module):
             chunk_size = para_dim
 
         if nonbatched_bias is not None:
-            # logits += nonbatched_bias.unsqueeze(1)
-            bias = gather_async_opp(*nonbatched_bias, dim=1)
-            bias = rearrange(bias, 'b q k h -> b h q k')
+            if nonbatched_bias[-1] == -1:
+                bias = nonbatched_bias[0]
+            else:
+                # logits += nonbatched_bias.unsqueeze(1)
+                bias = gather_async_opp(*nonbatched_bias, dim=1)
+                bias = rearrange(bias, 'b q k h -> b h q k')
 
         output = []
         for ax in range(0, para_dim, chunk_size):
@@ -539,7 +542,7 @@ class ChunkTriangleMultiplicationIncoming(nn.Module):
     def forward(self, Z_raw, Z_mask_col):
 
         para_dim = Z_raw.shape[1]
-        chunk_size = 256
+        chunk_size = 64
         if CHUNK_SIZE == None:
             chunk_size = para_dim
 
@@ -609,7 +612,7 @@ class AsyncMultiChunkTriangleMultiplicationIncoming(nn.Module):
     def forward(self, Z_raw, Z_mask_col):
 
         para_dim = Z_raw.shape[2]
-        chunk_size = 256
+        chunk_size = 64
         if CHUNK_SIZE == None:
             chunk_size = para_dim
         world_size = get_world_size()
@@ -690,4 +693,144 @@ class AsyncMultiChunkTriangleMultiplicationIncoming(nn.Module):
                                     prob=self.p_drop,
                                     training=self.training)
             output[:, i:i + chunk_size, :, :] = z
+        return output
+
+
+class ChunkTriangleAttentionStartingNode(nn.Module):
+
+    def __init__(self, d_pair, p_drop, c=32, n_head=4):
+        super(ChunkTriangleAttentionStartingNode, self).__init__()
+        self.d_pair = d_pair
+        self.c = c
+        self.n_head = n_head
+        self.p_drop = p_drop
+
+        self.layernorm1 = LayerNorm(d_pair)
+        # _init_weights = torch.nn.init.normal_(torch.zeros([d_pair, n_head]),
+        #                                       std=1.0 / math.sqrt(d_pair))
+        # self.linear_b_weights = nn.parameter.Parameter(data=_init_weights)
+
+        self.linear_b = Linear(d_pair, n_head, initializer='linear', use_bias=False)
+        self.attention = SelfAttention(qkv_dim=d_pair,
+                                       c=c,
+                                       n_head=n_head,
+                                       out_dim=d_pair,
+                                       gating=True,
+                                       last_bias_fuse=True)
+
+        self.out_bias = nn.parameter.Parameter(data=torch.zeros((d_pair,)), requires_grad=True)
+
+    def forward(self, Z_raw, Z_mask):
+        
+        para_dim = Z_raw.shape[1]
+        chunk_size = 1
+        
+        if CHUNK_SIZE == None:        
+            Z = self.layernorm1(Z_raw)
+            b = self.linear_b(Z)
+            b, work = gather_async(b, dim=1)
+            Z = self.attention(Z, Z_mask, (b, work))
+            dropout_mask = torch.ones_like(Z[:, 0:1, :, :], device=Z.device, dtype=Z.dtype)
+            a =  bias_dropout_add(Z,
+                                    self.out_bias,
+                                    dropout_mask,
+                                    Z_raw,
+                                    prob=self.p_drop,
+                                    training=self.training)
+        
+        # z is big, but b is small. So we compute z in chunk to get b, and recompute z in chunk later instead of storing it
+        b = torch.empty((Z_raw.shape[0], Z_raw.shape[1], Z_raw.shape[2], self.n_head), device=Z_raw.device, dtype=Z_raw.dtype)
+        for i in range(0, para_dim, chunk_size):
+            z = self.layernorm1(Z_raw[:, i:i + chunk_size, :, :])
+            b[:, i:i + chunk_size, :, :] = self.linear_b(z)
+        b, work = gather_async(b, dim=1)
+        b = gather_async_opp(b, work, dim=1)
+        b = rearrange(b, 'b q k h -> b h q k')
+        
+        output = torch.empty_like(Z_raw)
+        dropout_mask = torch.ones_like(z[:, 0:1, :, :], device=z.device, dtype=z.dtype)
+        for i in range(0, para_dim, chunk_size):
+            z_raw = Z_raw[:, i:i + chunk_size, :, :]
+            z = self.layernorm1(z_raw)
+            z_mask = Z_mask[:, i:i + chunk_size, :]
+            
+            z = self.attention(z, z_mask, (b, -1))
+            z =  bias_dropout_add(z,
+                                    self.out_bias,
+                                    dropout_mask,
+                                    z_raw,
+                                    prob=self.p_drop,
+                                    training=self.training)
+            output[:, i:i + chunk_size, :, :] = z
+        
+        return output
+
+
+class ChunkTriangleAttentionEndingNode(nn.Module):
+
+    def __init__(self, d_pair, p_drop, c=32, n_head=4):
+        super(ChunkTriangleAttentionEndingNode, self).__init__()
+        self.d_pair = d_pair
+        self.c = c
+        self.n_head = n_head
+        self.p_drop = p_drop
+
+        self.layernorm1 = LayerNorm(d_pair)
+        self.linear_b = Linear(d_pair, n_head, initializer='linear', use_bias=False)
+        self.attention = SelfAttention(qkv_dim=d_pair,
+                                       c=c,
+                                       n_head=n_head,
+                                       out_dim=d_pair,
+                                       gating=True,
+                                       last_bias_fuse=True)
+        self.out_bias = nn.parameter.Parameter(data=torch.zeros((d_pair,)), requires_grad=True)
+
+    def forward(self, Z_raw, Z_mask):
+
+        para_dim = Z_raw.shape[2]
+        chunk_size = 1
+        
+        if CHUNK_SIZE == None:  
+            Z = Z_raw.transpose(-2, -3)
+            Z_mask = Z_mask.transpose(-1, -2)
+
+            Z = self.layernorm1(Z)
+            b = self.linear_b(Z)
+            b, work = gather_async(b, dim=1)
+            Z = self.attention(Z, Z_mask, (b, work))
+            Z = Z.transpose(-2, -3)
+            dropout_mask = torch.ones_like(Z[:, :, 0:1, :], device=Z.device, dtype=Z.dtype)
+            return bias_dropout_add(Z,
+                                    self.out_bias,
+                                    dropout_mask,
+                                    Z_raw,
+                                    prob=self.p_drop,
+                                    training=self.training)
+
+        # z is big, but b is small. So we compute z in chunk to get b, and recompute z in chunk later instead of storing it
+        b = torch.empty((Z_raw.shape[0], Z_raw.shape[2], Z_raw.shape[1], self.n_head), device=Z_raw.device, dtype=Z_raw.dtype)
+        for i in range(0, para_dim, chunk_size):
+            z = Z_raw[:, :, i:i + chunk_size, :].transpose(-2, -3)
+            z = self.layernorm1(z)
+            b[:, i:i + chunk_size, :, :] = self.linear_b(z)
+        b, work = gather_async(b, dim=1)
+        b = gather_async_opp(b, work, dim=1)
+        b = rearrange(b, 'b q k h -> b h q k')
+        
+        output = torch.empty_like(Z_raw)
+        dropout_mask = torch.ones_like(Z_raw[:, :, 0:1, :], device=z.device, dtype=z.dtype)
+        for i in range(0, para_dim, chunk_size):
+            z_raw = Z_raw[:, :, i:i + chunk_size, :]
+            z = self.layernorm1(z_raw.transpose(-2, -3))
+            z_mask = Z_mask[:, :, i:i + chunk_size].transpose(-1, -2)
+
+            z = self.attention(z, z_mask, (b, -1)).transpose(-2, -3)
+            z =  bias_dropout_add(z,
+                                    self.out_bias,
+                                    dropout_mask,
+                                    z_raw,
+                                    prob=self.p_drop,
+                                    training=self.training)
+            output[:, :, i:i + chunk_size, :] = z
+        
         return output
