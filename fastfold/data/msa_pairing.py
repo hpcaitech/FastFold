@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 import scipy.linalg
 
-from openfold.np import residue_constants
+from fastfold.common import residue_constants
 
 
 # TODO: This stuff should probably also be in a config
