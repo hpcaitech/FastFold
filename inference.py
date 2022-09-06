@@ -32,6 +32,7 @@ from fastfold.common import protein, residue_constants
 from fastfold.config import model_config
 from fastfold.model.fastnn import set_chunk_size
 from fastfold.data import data_pipeline, feature_pipeline, templates
+from fastfold.data.tools import hhsearch, hmmsearch
 from fastfold.workflow.template import FastFoldDataWorkFlow
 from fastfold.utils import inject_fastnn
 from fastfold.data.parsers import parse_fasta
@@ -111,8 +112,41 @@ def inference_model(rank, world_size, result_q, batch, args):
 
 
 def main(args):
+    if args.model_preset == "multimer":
+        inference_multimer_model(args)
+    else:
+        inference_monomer_model(args)
+
+
+def inference_multimer_model(args):
+    print("running in multimer mode...")
+
+    # feature_dict = pickle.load(open("/home/lcmql/data/features_pdb1o5d.pkl", "rb"))
+    
+    predict_max_templates = 4
+
+    if not args.use_precomputed_alignments:
+        template_searcher = hmmsearch.Hmmsearch(
+            binary_path=args.hmmsearch_binary_path,
+            hmmbuild_binary_path=args.hmmbuild_binary_path,
+            database_path=args.pdb_seqres_database_path,
+        )
+    else:
+        template_searcher = None
+
+    template_featurizer = templates.HmmsearchHitFeaturizer(
+        mmcif_dir=args.template_mmcif_dir,
+        max_template_date=args.max_template_date,
+        max_hits=predict_max_templates,
+        kalign_binary_path=args.kalign_binary_path,
+        release_dates_path=args.release_dates_path,
+        obsolete_pdbs_path=args.obsolete_pdbs_path,
+    )
+
+
+def inference_monomer_model(args):
+    print("running in monomer mode...")
     config = model_config(args.model_name)
-    global_is_multimer = True if args.model_preset == "multimer" else False
 
     template_featurizer = templates.TemplateHitFeaturizer(
         mmcif_dir=args.template_mmcif_dir,
@@ -120,7 +154,8 @@ def main(args):
         max_hits=config.data.predict.max_templates,
         kalign_binary_path=args.kalign_binary_path,
         release_dates_path=args.release_dates_path,
-        obsolete_pdbs_path=args.obsolete_pdbs_path)
+        obsolete_pdbs_path=args.obsolete_pdbs_path
+    )
 
     use_small_bfd = args.preset == 'reduced_dbs'  # (args.bfd_database_path is None)
     if use_small_bfd:
@@ -158,47 +193,44 @@ def main(args):
 
         print("Generating features...")
         local_alignment_dir = os.path.join(alignment_dir, tag)
-        if global_is_multimer:
-            print("running in multimer mode...")
-            feature_dict = pickle.load(open("/home/lcmql/data/features_pdb1o5d.pkl", "rb"))
-        else:
-            if (args.use_precomputed_alignments is None):
-                if not os.path.exists(local_alignment_dir):
-                    os.makedirs(local_alignment_dir)
-                if args.enable_workflow:
-                    print("Running alignment with ray workflow...")
-                    alignment_data_workflow_runner = FastFoldDataWorkFlow(
-                        jackhmmer_binary_path=args.jackhmmer_binary_path,
-                        hhblits_binary_path=args.hhblits_binary_path,
-                        hhsearch_binary_path=args.hhsearch_binary_path,
-                        uniref90_database_path=args.uniref90_database_path,
-                        mgnify_database_path=args.mgnify_database_path,
-                        bfd_database_path=args.bfd_database_path,
-                        uniclust30_database_path=args.uniclust30_database_path,
-                        pdb70_database_path=args.pdb70_database_path,
-                        use_small_bfd=use_small_bfd,
-                        no_cpus=args.cpus,
-                    )
-                    t = time.perf_counter()
-                    alignment_data_workflow_runner.run(fasta_path, output_dir=output_dir_base, alignment_dir=local_alignment_dir)
-                    print(f"Alignment data workflow time: {time.perf_counter() - t}")
-                else:
-                    alignment_runner = data_pipeline.AlignmentRunner(
-                        jackhmmer_binary_path=args.jackhmmer_binary_path,
-                        hhblits_binary_path=args.hhblits_binary_path,
-                        hhsearch_binary_path=args.hhsearch_binary_path,
-                        uniref90_database_path=args.uniref90_database_path,
-                        mgnify_database_path=args.mgnify_database_path,
-                        bfd_database_path=args.bfd_database_path,
-                        uniclust30_database_path=args.uniclust30_database_path,
-                        pdb70_database_path=args.pdb70_database_path,
-                        use_small_bfd=use_small_bfd,
-                        no_cpus=args.cpus,
-                    )
-                    alignment_runner.run(fasta_path, local_alignment_dir)
-                    
-            feature_dict = data_processor.process_fasta(fasta_path=fasta_path,
-                                                    alignment_dir=local_alignment_dir)
+
+        if (args.use_precomputed_alignments is None):
+            if not os.path.exists(local_alignment_dir):
+                os.makedirs(local_alignment_dir)
+            if args.enable_workflow:
+                print("Running alignment with ray workflow...")
+                alignment_data_workflow_runner = FastFoldDataWorkFlow(
+                    jackhmmer_binary_path=args.jackhmmer_binary_path,
+                    hhblits_binary_path=args.hhblits_binary_path,
+                    hhsearch_binary_path=args.hhsearch_binary_path,
+                    uniref90_database_path=args.uniref90_database_path,
+                    mgnify_database_path=args.mgnify_database_path,
+                    bfd_database_path=args.bfd_database_path,
+                    uniclust30_database_path=args.uniclust30_database_path,
+                    pdb70_database_path=args.pdb70_database_path,
+                    use_small_bfd=use_small_bfd,
+                    no_cpus=args.cpus,
+                )
+                t = time.perf_counter()
+                alignment_data_workflow_runner.run(fasta_path, output_dir=output_dir_base, alignment_dir=local_alignment_dir)
+                print(f"Alignment data workflow time: {time.perf_counter() - t}")
+            else:
+                alignment_runner = data_pipeline.AlignmentRunner(
+                    jackhmmer_binary_path=args.jackhmmer_binary_path,
+                    hhblits_binary_path=args.hhblits_binary_path,
+                    hhsearch_binary_path=args.hhsearch_binary_path,
+                    uniref90_database_path=args.uniref90_database_path,
+                    mgnify_database_path=args.mgnify_database_path,
+                    bfd_database_path=args.bfd_database_path,
+                    uniclust30_database_path=args.uniclust30_database_path,
+                    pdb70_database_path=args.pdb70_database_path,
+                    use_small_bfd=use_small_bfd,
+                    no_cpus=args.cpus,
+                )
+                alignment_runner.run(fasta_path, local_alignment_dir)
+                
+        feature_dict = data_processor.process_fasta(fasta_path=fasta_path,
+                                                alignment_dir=local_alignment_dir)
 
         # Remove temporary FASTA file
         os.remove(fasta_path)
@@ -206,7 +238,6 @@ def main(args):
         processed_feature_dict = feature_processor.process_features(
             feature_dict,
             mode='predict',
-            is_multimer=global_is_multimer,
         )
 
         batch = processed_feature_dict
@@ -250,7 +281,6 @@ def main(args):
                                             f'{tag}_{args.model_name}_relaxed.pdb')
         with open(relaxed_output_path, 'w') as f:
             f.write(relaxed_pdb_str)
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
