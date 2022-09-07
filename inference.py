@@ -19,6 +19,8 @@ import random
 import sys
 import time
 from datetime import date
+import tempfile
+import contextlib
 
 import numpy as np
 import torch
@@ -39,6 +41,12 @@ from fastfold.data.parsers import parse_fasta
 from fastfold.utils.import_weights import import_jax_weights_
 from fastfold.utils.tensor_utils import tensor_tree_map
 
+@contextlib.contextmanager
+def temp_fasta_file(fasta_str: str):
+    with tempfile.NamedTemporaryFile('w', suffix='.fasta') as fasta_file:
+        fasta_file.write(fasta_str)
+        fasta_file.seek(0)
+        yield fasta_file.name
 
 def add_data_args(parser: argparse.ArgumentParser):
     parser.add_argument(
@@ -66,10 +74,22 @@ def add_data_args(parser: argparse.ArgumentParser):
         type=str,
         default=None,
     )
+    parser.add_argument(
+        "--pdb_seqres_database_path",
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        "--uniprot_database_path",
+        type=str,
+        default=None,
+    )
     parser.add_argument('--jackhmmer_binary_path', type=str, default='/usr/bin/jackhmmer')
     parser.add_argument('--hhblits_binary_path', type=str, default='/usr/bin/hhblits')
     parser.add_argument('--hhsearch_binary_path', type=str, default='/usr/bin/hhsearch')
     parser.add_argument('--kalign_binary_path', type=str, default='/usr/bin/kalign')
+    parser.add_argument("--hmmsearch_binary_path", type=str, default="hmmsearch")
+    parser.add_argument("--hmmbuild_binary_path", type=str, default="hmmbuild")
     parser.add_argument(
         '--max_template_date',
         type=str,
@@ -120,7 +140,7 @@ def main(args):
 
 def inference_multimer_model(args):
     print("running in multimer mode...")
-
+    config = model_config(args.model_name)
     # feature_dict = pickle.load(open("/home/lcmql/data/features_pdb1o5d.pkl", "rb"))
     
     predict_max_templates = 4
@@ -143,6 +163,81 @@ def inference_multimer_model(args):
         obsolete_pdbs_path=args.obsolete_pdbs_path,
     )
 
+    if(not args.use_precomputed_alignments):
+        alignment_runner = data_pipeline.AlignmentRunnerMultimer(
+            jackhmmer_binary_path=args.jackhmmer_binary_path,
+            hhblits_binary_path=args.hhblits_binary_path,
+            uniref90_database_path=args.uniref90_database_path,
+            mgnify_database_path=args.mgnify_database_path,
+            bfd_database_path=args.bfd_database_path,
+            uniclust30_database_path=args.uniclust30_database_path,
+            uniprot_database_path=args.uniprot_database_path,
+            template_searcher=template_searcher,
+            use_small_bfd=(args.bfd_database_path is None),
+            no_cpus=args.cpus,
+        )
+    else:
+        alignment_runner = None
+
+    monomer_data_processor = data_pipeline.DataPipeline(
+        template_featurizer=template_featurizer,
+    )
+
+
+    data_processor = data_pipeline.DataPipelineMultimer(
+            monomer_data_pipeline=monomer_data_processor,
+    )
+
+    output_dir_base = args.output_dir
+    random_seed = args.data_random_seed
+    if random_seed is None:
+        random_seed = random.randrange(sys.maxsize)
+    
+    feature_processor = feature_pipeline.FeaturePipeline(
+        config.data
+    )
+
+    if not os.path.exists(output_dir_base):
+        os.makedirs(output_dir_base)
+    if(not args.use_precomputed_alignments):
+        alignment_dir = os.path.join(output_dir_base, "alignments")
+    else:
+        alignment_dir = args.use_precomputed_alignments
+
+    # Gather input sequences
+    fasta_path = args.fasta_path
+    with open(fasta_path, "r") as fp:
+        data = fp.read()
+
+    lines = [
+        l.replace('\n', '') 
+        for prot in data.split('>') for l in prot.strip().split('\n', 1)
+    ][1:]
+    tags, seqs = lines[::2], lines[1::2]
+
+
+    for tag, seq in zip(tags, seqs):
+        local_alignment_dir = os.path.join(alignment_dir, tag)
+        if(args.use_precomputed_alignments is None):
+            if not os.path.exists(local_alignment_dir):
+                os.makedirs(local_alignment_dir)
+            
+            chain_fasta_str = f'>chain_{tag}\n{seq}\n'
+            with temp_fasta_file(chain_fasta_str) as chain_fasta_path:
+                alignment_runner.run(
+                    chain_fasta_path, local_alignment_dir
+                )
+                print(f"Finished running alignment for {tag}")
+                
+    local_alignment_dir = alignment_dir
+
+    feature_dict = data_processor.process_fasta(
+        fasta_path=fasta_path, alignment_dir=local_alignment_dir
+    )
+
+    processed_feature_dict = feature_processor.process_features(
+        feature_dict, mode='predict', is_multimer=True,
+    )
 
 def inference_monomer_model(args):
     print("running in monomer mode...")
@@ -281,6 +376,7 @@ def inference_monomer_model(args):
                                             f'{tag}_{args.model_name}_relaxed.pdb')
         with open(relaxed_output_path, 'w') as f:
             f.write(relaxed_pdb_str)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
