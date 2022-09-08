@@ -184,7 +184,7 @@ def inference_monomer_model(args):
     seqs, tags = parse_fasta(fasta)
 
     for tag, seq in zip(tags, seqs):
-        print(f"tag:{tag} seq:{seq}")
+        print(f"tag:{tag}\nseq[{len(seq)}]:{seq}")
         batch = [None]
         
         fasta_path = os.path.join(args.output_dir, "tmp.fasta")

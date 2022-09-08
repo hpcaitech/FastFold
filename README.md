@@ -39,7 +39,6 @@ git clone https://github.com/hpcaitech/FastFold
 cd FastFold
 conda env create --name=fastfold -f environment.yml
 conda activate fastfold
-bash scripts/patch_openmm.sh
 python setup.py install
 ```
 
