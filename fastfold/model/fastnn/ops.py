@@ -1,3 +1,4 @@
+from typing import Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -70,7 +71,7 @@ class ChunkTransition(nn.Module):
 
     def forward(self, src):
         para_dim = src.shape[1]
-        chunk_size = 128
+        chunk_size = 48
         if CHUNK_SIZE == None:
             chunk_size = para_dim
 
@@ -97,7 +98,7 @@ class OutProductMean(nn.Module):
                                initializer='zero',
                                use_bias=True)
 
-    def forward(self, M, M_mask):
+    def forward(self, M, M_mask, Z_raw):
         M = self.layernormM(M)
         right_act = self.linear_b(M)
 
@@ -119,20 +120,15 @@ class OutProductMean(nn.Module):
         if CHUNK_SIZE == None:
             chunk_size = para_dim
 
-        out = []
+        Z = torch.empty_like(Z_raw)
         for ax in range(0, para_dim, chunk_size):
             left_act_part = left_act[:, :, ax:ax + chunk_size, :]
-
             O = torch.einsum('bsid,bsje->bijde', left_act_part, right_act_all)
-
             O = rearrange(O, 'b i j d e -> b i j (d e)')
-
-            out.append(self.o_linear(O))
-
-        Z = torch.cat(out, dim=1)
+            O = self.o_linear(O)
+            Z[:, ax:ax + chunk_size, :, :] = O
 
         Z /= (1e-3 + norm)
-
         return Z
 
 
@@ -254,98 +250,6 @@ def permute_final_dims(tensor, inds):
     return tensor.permute(first_inds + [zero_index + i for i in inds])
 
 
-class MultiChunkTriangleMultiplicationOutgoing(nn.Module):
-
-    def __init__(self, d_pair, p_drop, c=128):
-        super(MultiChunkTriangleMultiplicationOutgoing, self).__init__()
-        self.d_pair = d_pair
-        self.c = c
-
-        self.layernorm1 = LayerNorm(d_pair)
-        self.left_right_projection = Linear(d_pair, 2 * c)
-        self.left_right_gate = Linear(d_pair, 2 * c, initializer='zeros', bias_init=1.)
-
-        self.output_gate = Linear(d_pair, d_pair, initializer='zeros', bias_init=1.)
-        self.layernorm2 = LayerNorm(c)
-        self.output_projection = Linear(d_pair, d_pair, initializer='zeros', use_bias=False)
-        self.output_bias = nn.parameter.Parameter(data=torch.zeros((d_pair,)), requires_grad=True)
-
-        self.p_drop = p_drop
-
-    def forward(self, Z_raw, Z_mask_row):
-
-        para_dim = Z_raw.shape[1]
-        chunk_size = 256
-        if CHUNK_SIZE == None:
-            chunk_size = para_dim
-        world_size = get_world_size()
-        rank = get_rank()
-        output = torch.empty_like(Z_raw)
-        
-        para_dim = Z_raw.shape[1]
-        chunk_size = 256
-        world_size = get_world_size()
-        rank = get_rank()
-        output = torch.empty_like(Z_raw)
-        
-        for i in range(0, para_dim, chunk_size):
-            zi = Z_raw[:, i:i + chunk_size, :, :]
-            zi = self.layernorm1(zi)
-            gi = torch.sigmoid(self.left_right_gate(zi))
-            i_left_right_proj_act = self.left_right_projection(zi)
-            i_left_right_proj_act = Z_mask_row[:, i:i + chunk_size, :].unsqueeze(-1) * i_left_right_proj_act
-            i_left_right_proj_act *= gi
-            left_proj_act, _ = i_left_right_proj_act.chunk(2, dim=-1)
-            left_proj_act = permute_final_dims(left_proj_act, (2, 0, 1))
-            
-            for j in range(0, para_dim, chunk_size):
-                zj = Z_raw[:, j:j + chunk_size, :, :]
-                for k in range(0, world_size):
-                    if k == rank: # broadcast self right_proj_act
-                        zj = self.layernorm1(zj)
-                        gj = torch.sigmoid(self.left_right_gate(zj))
-                        j_left_right_proj_act = self.left_right_projection(zj)
-                        j_left_right_proj_act = Z_mask_row[:, j:j + chunk_size, :].unsqueeze(-1) * j_left_right_proj_act
-                        j_left_right_proj_act *= gj
-                        _, right_proj_act = j_left_right_proj_act.chunk(2, dim=-1)
-                        right_proj_act = right_proj_act.contiguous()
-                        
-                        broadcast_sync(k, right_proj_act, host=True) # broadcast
-                        
-                        p = torch.matmul(
-                            left_proj_act,
-                            permute_final_dims(right_proj_act, (2, 1, 0)),
-                        )
-                        p = permute_final_dims(p, (1, 2, 0))
-                        j_global = para_dim * k + j
-                        output[:, i:i + chunk_size, j_global:j_global + chunk_size, :] = p
-                        
-                    else:   # receive others broadcast
-                        right_proj_act = broadcast_sync(k, zj, host=False)
-                        p = torch.matmul(
-                            left_proj_act,
-                            permute_final_dims(right_proj_act, (2, 1, 0)),
-                        )
-                        p = permute_final_dims(p, (1, 2, 0))
-                        j_global = para_dim * k + j
-                        output[:, i:i + chunk_size, j_global:j_global + chunk_size, :] = p
-                        
-        dropout_mask = torch.ones_like(Z_raw[:, 0:1, :, :], device=Z_raw.device, dtype=Z_raw.dtype)
-        for i in range(0, para_dim, chunk_size):
-            z_raw = output[:, i:i + chunk_size, :, :]
-            g = torch.sigmoid(self.output_gate(z_raw))
-            z = self.output_projection(self.layernorm2(z_raw))
-            z = bias_ele_dropout_residual(z,
-                                    self.output_bias,
-                                    g,
-                                    dropout_mask,
-                                    z_raw,
-                                    prob=self.p_drop,
-                                    training=self.training)
-            output[:, i:i + chunk_size, :, :] = z
-        return output
-
-
 class AsyncMultiChunkTriangleMultiplicationOutgoing(nn.Module):
 
     def __init__(self, d_pair, p_drop, c=128):
@@ -367,7 +271,7 @@ class AsyncMultiChunkTriangleMultiplicationOutgoing(nn.Module):
     def forward(self, Z_raw, Z_mask_row):
 
         para_dim = Z_raw.shape[1]
-        chunk_size = 256
+        chunk_size = 32
         if CHUNK_SIZE == None:
             chunk_size = para_dim
         world_size = get_world_size()
@@ -400,22 +304,23 @@ class AsyncMultiChunkTriangleMultiplicationOutgoing(nn.Module):
                 
                 for k in range(0, world_size):
                     
-                    if work:
-                        broadcast_async_opp(work) # collect last broadcast
-                        if k != rank:
-                            right_proj_act_rec = right_proj_act_tmp.clone()
-                    else:  # init first broadcast
-                        if k == rank:
-                            broadcast_sync(k, right_proj_act, host=True)
-                        else:
-                            right_proj_act_tmp = broadcast_sync(k, right_proj_act, host=False)
-                            right_proj_act_rec = right_proj_act_tmp.clone()
+                    if world_size > 1:
+                        if work:
+                            broadcast_async_opp(work) # collect last broadcast
+                            if k != rank:
+                                right_proj_act_rec = right_proj_act_tmp.clone()
+                        else:  # init first broadcast
+                            if k == rank:
+                                broadcast_sync(k, right_proj_act, host=True)
+                            else:
+                                right_proj_act_tmp = broadcast_sync(k, right_proj_act, host=False)
+                                right_proj_act_rec = right_proj_act_tmp.clone()
                     
-                    if k + 1 != world_size: # launch next broadcast
-                        if k + 1 == rank:
-                            work = broadcast_async(k + 1, right_proj_act, host=True)
-                        else:
-                            work = broadcast_async(k + 1, right_proj_act_tmp, host=False)
+                        if k + 1 != world_size: # launch next broadcast
+                            if k + 1 == rank:
+                                work = broadcast_async(k + 1, right_proj_act, host=True)
+                            else:
+                                work = broadcast_async(k + 1, right_proj_act_tmp, host=False)
                         
                     if k == rank: # broadcast self right_proj_act
                         p = torch.matmul(
@@ -424,7 +329,7 @@ class AsyncMultiChunkTriangleMultiplicationOutgoing(nn.Module):
                         )
                         p = permute_final_dims(p, (1, 2, 0))
                         j_global = para_dim * k + j
-                        output[:, i:i + chunk_size, j_global:j_global + chunk_size, :] = p
+                        output[:, i:i + chunk_size, j_global:min(j_global + chunk_size, para_dim * (k + 1)), :] = p
                         
                     else:   # receive others broadcast                        
                         p = torch.matmul(
@@ -433,148 +338,8 @@ class AsyncMultiChunkTriangleMultiplicationOutgoing(nn.Module):
                         )
                         p = permute_final_dims(p, (1, 2, 0))
                         j_global = para_dim * k + j
-                        output[:, i:i + chunk_size, j_global:j_global + chunk_size, :] = p
+                        output[:, i:i + chunk_size, j_global:min(j_global + chunk_size, para_dim * (k + 1)), :] = p
                         
-        dropout_mask = torch.ones_like(Z_raw[:, 0:1, :, :], device=Z_raw.device, dtype=Z_raw.dtype)
-        for i in range(0, para_dim, chunk_size):
-            z_raw = output[:, i:i + chunk_size, :, :]
-            g = torch.sigmoid(self.output_gate(z_raw))
-            z = self.output_projection(self.layernorm2(z_raw))
-            z = bias_ele_dropout_residual(z,
-                                    self.output_bias,
-                                    g,
-                                    dropout_mask,
-                                    z_raw,
-                                    prob=self.p_drop,
-                                    training=self.training)
-            output[:, i:i + chunk_size, :, :] = z
-        return output
-
-
-class ChunkTriangleMultiplicationOutgoing(nn.Module):
-
-    def __init__(self, d_pair, p_drop, c=128):
-        super(ChunkTriangleMultiplicationOutgoing, self).__init__()
-        self.d_pair = d_pair
-        self.c = c
-
-        self.layernorm1 = LayerNorm(d_pair)
-        self.left_right_projection = Linear(d_pair, 2 * c)
-        self.left_right_gate = Linear(d_pair, 2 * c, initializer='zeros', bias_init=1.)
-
-        self.output_gate = Linear(d_pair, d_pair, initializer='zeros', bias_init=1.)
-        self.layernorm2 = LayerNorm(c)
-        self.output_projection = Linear(d_pair, d_pair, initializer='zeros', use_bias=False)
-        self.output_bias = nn.parameter.Parameter(data=torch.zeros((d_pair,)), requires_grad=True)
-
-        self.p_drop = p_drop
-
-    def forward(self, Z_raw, Z_mask_row):
-
-        para_dim = Z_raw.shape[1]
-        chunk_size = 256
-        if CHUNK_SIZE == None:
-            chunk_size = para_dim
-
-        output = torch.empty_like(Z_raw)
-        
-        for i in range(0, para_dim, chunk_size):
-            zi = Z_raw[:, i:i + chunk_size, :, :]
-            zi = self.layernorm1(zi)
-            gi = torch.sigmoid(self.left_right_gate(zi))
-            i_left_right_proj_act = self.left_right_projection(zi)
-            i_left_right_proj_act = Z_mask_row[:, i:i + chunk_size, :].unsqueeze(-1) * i_left_right_proj_act
-            i_left_right_proj_act *= gi
-            left_proj_act, _ = i_left_right_proj_act.chunk(2, dim=-1)
-            left_proj_act = permute_final_dims(left_proj_act, (2, 0, 1))
-            
-            for j in range(0, para_dim, chunk_size):
-                                
-                zj = Z_raw[:, j:j + chunk_size, :, :]
-                zj = self.layernorm1(zj)
-                gj = torch.sigmoid(self.left_right_gate(zj))
-                j_left_right_proj_act = self.left_right_projection(zj)
-                j_left_right_proj_act = Z_mask_row[:, j:j + chunk_size, :].unsqueeze(-1) * j_left_right_proj_act
-                j_left_right_proj_act *= gj
-                _, right_proj_act = j_left_right_proj_act.chunk(2, dim=-1)
-                
-                p = torch.matmul(
-                    left_proj_act,
-                    permute_final_dims(right_proj_act, (2, 1, 0)),
-                )
-                p = permute_final_dims(p, (1, 2, 0))
-                output[:, i:i + chunk_size, j:j + chunk_size, :] = p
-
-        dropout_mask = torch.ones_like(Z_raw[:, 0:1, :, :], device=Z_raw.device, dtype=Z_raw.dtype)
-        for i in range(0, para_dim, chunk_size):
-            z_raw = output[:, i:i + chunk_size, :, :]
-            g = torch.sigmoid(self.output_gate(z_raw))
-            z = self.output_projection(self.layernorm2(z_raw))
-            z = bias_ele_dropout_residual(z,
-                                    self.output_bias,
-                                    g,
-                                    dropout_mask,
-                                    z_raw,
-                                    prob=self.p_drop,
-                                    training=self.training)
-            output[:, i:i + chunk_size, :, :] = z
-        return output
-
-
-class ChunkTriangleMultiplicationIncoming(nn.Module):
-
-    def __init__(self, d_pair, p_drop, c=128):
-        super(ChunkTriangleMultiplicationIncoming, self).__init__()
-        self.d_pair = d_pair
-        self.c = c
-
-        self.layernorm1 = LayerNorm(d_pair)
-        self.left_right_projection = Linear(d_pair, 2 * c)
-        self.left_right_gate = Linear(d_pair, 2 * c, initializer='zeros', bias_init=1.)
-
-        self.output_gate = Linear(d_pair, d_pair, initializer='zeros', bias_init=1.)
-        self.layernorm2 = LayerNorm(c)
-        self.output_projection = Linear(d_pair, d_pair, initializer='zeros', use_bias=False)
-        self.output_bias = nn.parameter.Parameter(data=torch.zeros((d_pair,)), requires_grad=True)
-
-        self.p_drop = p_drop
-
-    def forward(self, Z_raw, Z_mask_col):
-
-        para_dim = Z_raw.shape[1]
-        chunk_size = 64
-        if CHUNK_SIZE == None:
-            chunk_size = para_dim
-
-        output = torch.empty_like(Z_raw)
-        
-        for i in range(0, para_dim, chunk_size):
-            zi = Z_raw[:, :, i:i + chunk_size, :]
-            zi = self.layernorm1(zi)
-            gi = torch.sigmoid(self.left_right_gate(zi))
-            i_left_right_proj_act = self.left_right_projection(zi)
-            i_left_right_proj_act = Z_mask_col[:, :, i:i + chunk_size].unsqueeze(-1) * i_left_right_proj_act
-            i_left_right_proj_act *= gi
-            left_proj_act, _ = i_left_right_proj_act.chunk(2, dim=-1)
-            left_proj_act = permute_final_dims(left_proj_act, (2, 1, 0))
-            
-            for j in range(0, para_dim, chunk_size):
-                                
-                zj = Z_raw[:, :, j:j + chunk_size, :]
-                zj = self.layernorm1(zj)
-                gj = torch.sigmoid(self.left_right_gate(zj))
-                j_left_right_proj_act = self.left_right_projection(zj)
-                j_left_right_proj_act = Z_mask_col[:, :, j:j + chunk_size].unsqueeze(-1) * j_left_right_proj_act
-                j_left_right_proj_act *= gj
-                _, right_proj_act = j_left_right_proj_act.chunk(2, dim=-1)
-
-                p = torch.matmul(
-                    left_proj_act,
-                    permute_final_dims(right_proj_act, (2, 0, 1)),
-                )
-                p = permute_final_dims(p, (1, 2, 0))
-                output[:, i:i + chunk_size, j:j + chunk_size, :] = p
-
         dropout_mask = torch.ones_like(Z_raw[:, 0:1, :, :], device=Z_raw.device, dtype=Z_raw.dtype)
         for i in range(0, para_dim, chunk_size):
             z_raw = output[:, i:i + chunk_size, :, :]
@@ -612,7 +377,7 @@ class AsyncMultiChunkTriangleMultiplicationIncoming(nn.Module):
     def forward(self, Z_raw, Z_mask_col):
 
         para_dim = Z_raw.shape[2]
-        chunk_size = 64
+        chunk_size = 32
         if CHUNK_SIZE == None:
             chunk_size = para_dim
         world_size = get_world_size()
@@ -645,22 +410,23 @@ class AsyncMultiChunkTriangleMultiplicationIncoming(nn.Module):
                 
                 for k in range(0, world_size):
                     
-                    if work:
-                        broadcast_async_opp(work) # collect last broadcast
-                        if k != rank:
-                            right_proj_act_rec = right_proj_act_tmp.clone()
-                    else:  # init first broadcast
-                        if k == rank:
-                            broadcast_sync(k, right_proj_act, host=True)
-                        else:
-                            right_proj_act_tmp = broadcast_sync(k, right_proj_act, host=False)
-                            right_proj_act_rec = right_proj_act_tmp.clone()
-                    
-                    if k + 1 != world_size: # launch next broadcast
-                        if k + 1 == rank:
-                            work = broadcast_async(k + 1, right_proj_act, host=True)
-                        else:
-                            work = broadcast_async(k + 1, right_proj_act_tmp, host=False)
+                    if world_size > 1:
+                        if work:
+                            broadcast_async_opp(work) # collect last broadcast
+                            if k != rank:
+                                right_proj_act_rec = right_proj_act_tmp.clone()
+                        else:  # init first broadcast
+                            if k == rank:
+                                broadcast_sync(k, right_proj_act, host=True)
+                            else:
+                                right_proj_act_tmp = broadcast_sync(k, right_proj_act, host=False)
+                                right_proj_act_rec = right_proj_act_tmp.clone()
+                        
+                        if k + 1 != world_size: # launch next broadcast
+                            if k + 1 == rank:
+                                work = broadcast_async(k + 1, right_proj_act, host=True)
+                            else:
+                                work = broadcast_async(k + 1, right_proj_act_tmp, host=False)
                     
                     if k == rank: # broadcast self right_proj_act
                         p = torch.matmul(
@@ -669,7 +435,7 @@ class AsyncMultiChunkTriangleMultiplicationIncoming(nn.Module):
                         )
                         p = permute_final_dims(p, (1, 2, 0))
                         i_global = para_dim * k + i
-                        output[:, i_global:i_global + chunk_size, j:j + chunk_size, :] = p
+                        output[:, i_global:min(i_global + chunk_size, para_dim * (k + 1)), j:j + chunk_size, :] = p
                         
                     else:   # receive others broadcast                        
                         p = torch.matmul(
@@ -678,7 +444,7 @@ class AsyncMultiChunkTriangleMultiplicationIncoming(nn.Module):
                         )
                         p = permute_final_dims(p, (1, 2, 0))
                         i_global = para_dim * k + i
-                        output[:, i_global:i_global + chunk_size, j:j + chunk_size, :] = p
+                        output[:, i_global:min(i_global + chunk_size, para_dim * (k + 1)), j:j + chunk_size, :] = p
                             
         dropout_mask = torch.ones_like(Z_raw[:, 0:1, :, :], device=Z_raw.device, dtype=Z_raw.dtype)
         for i in range(0, para_dim, chunk_size):
@@ -834,3 +600,104 @@ class ChunkTriangleAttentionEndingNode(nn.Module):
             output[:, :, i:i + chunk_size, :] = z
         
         return output
+
+
+class RecyclingEmbedder(nn.Module):
+    """
+    Embeds the output of an iteration of the model for recycling.
+
+    Implements Algorithm 32.
+    """
+
+    def __init__(
+        self,
+        c_m: int,
+        c_z: int,
+        min_bin: float,
+        max_bin: float,
+        no_bins: int,
+        inf: float = 1e8,
+        **kwargs,
+    ):
+        """
+        Args:
+            c_m:
+                MSA channel dimension
+            c_z:
+                Pair embedding channel dimension
+            min_bin:
+                Smallest distogram bin (Angstroms)
+            max_bin:
+                Largest distogram bin (Angstroms)
+            no_bins:
+                Number of distogram bins
+        """
+        super(RecyclingEmbedder, self).__init__()
+
+        self.c_m = c_m
+        self.c_z = c_z
+        self.min_bin = min_bin
+        self.max_bin = max_bin
+        self.no_bins = no_bins
+        self.inf = inf
+
+        self.linear = Linear(self.no_bins, self.c_z)
+        self.layer_norm_m = LayerNorm(self.c_m)
+        self.layer_norm_z = LayerNorm(self.c_z)
+
+    def forward(
+        self,
+        m: torch.Tensor,
+        z: torch.Tensor,
+        x: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            m:
+                First row of the MSA embedding. [*, N_res, C_m]
+            z:
+                [*, N_res, N_res, C_z] pair embedding
+            x:
+                [*, N_res, 3] predicted C_beta coordinates
+        Returns:
+            m:
+                [*, N_res, C_m] MSA embedding update
+            z:
+                [*, N_res, N_res, C_z] pair embedding update
+        """
+        bins = torch.linspace(
+            self.min_bin,
+            self.max_bin,
+            self.no_bins,
+            dtype=x.dtype,
+            device=x.device,
+            requires_grad=False,
+        )
+
+        # [*, N, C_m]
+        m_update = self.layer_norm_m(m)
+
+        # This squared method might become problematic in FP16 mode.
+        # I'm using it because my homegrown method had a stubborn discrepancy I
+        # couldn't find in time.
+        squared_bins = bins ** 2
+        upper = torch.cat(
+            [squared_bins[1:], squared_bins.new_tensor([self.inf])], dim=-1
+        )
+        d = torch.sum(
+            (x[..., None, :] - x[..., None, :, :]) ** 2, dim=-1, keepdims=True
+        )
+        # [*, N, N, no_bins]
+        d = ((d > squared_bins) * (d < upper)).type(x.dtype)
+        
+        # [*, N, N, C_z]
+        chunk_size = 48
+        para_dim = d.shape[1]
+        if CHUNK_SIZE == None:
+            chunk_size = para_dim
+        
+        for i in range(0, para_dim, chunk_size):
+            di = self.linear(d[i:i + chunk_size, :, :])
+            z[i:i + chunk_size, :, :] = di + self.layer_norm_z(z[i:i + chunk_size, :, :])
+
+        return m_update, z

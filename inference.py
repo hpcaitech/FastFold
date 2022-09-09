@@ -74,6 +74,7 @@ def add_data_args(parser: argparse.ArgumentParser):
     )
     parser.add_argument('--obsolete_pdbs_path', type=str, default=None)
     parser.add_argument('--release_dates_path', type=str, default=None)
+    parser.add_argument('--chunk_size', type=int, default=None)
 
 
 def inference_model(rank, world_size, result_q, batch, args):
@@ -84,6 +85,8 @@ def inference_model(rank, world_size, result_q, batch, args):
     fastfold.distributed.init_dap()
     torch.cuda.set_device(rank)
     config = model_config(args.model_name)
+    if args.chunk:
+        config.globals.chunk_size = args.chunk_size
     model = AlphaFold(config)
     import_jax_weights_(model, args.param_path, version=args.model_name)
 

@@ -19,6 +19,7 @@ from typing import Tuple
 
 from fastfold.model.nn.primitives import Linear, LayerNorm
 from fastfold.utils.tensor_utils import one_hot
+from fastfold.model.fastnn.ops import RecyclingEmbedder
 
 
 class InputEmbedder(nn.Module):
@@ -111,8 +112,8 @@ class InputEmbedder(nn.Module):
         tf_emb_j = self.linear_tf_z_j(tf)
 
         # [*, N_res, N_res, c_z]
-        pair_emb = tf_emb_i[..., None, :] + tf_emb_j[..., None, :, :]
-        pair_emb = pair_emb + self.relpos(ri.type(pair_emb.dtype))
+        pair_emb = self.relpos(ri.type(tf_emb_i.dtype))
+        pair_emb += tf_emb_i[..., None, :] + tf_emb_j[..., None, :, :]
 
         # [*, N_clust, N_res, c_m]
         n_clust = msa.shape[-3]
@@ -126,100 +127,101 @@ class InputEmbedder(nn.Module):
         return msa_emb, pair_emb
 
 
-class RecyclingEmbedder(nn.Module):
-    """
-    Embeds the output of an iteration of the model for recycling.
+# class RecyclingEmbedder(nn.Module):
+#     """
+#     Embeds the output of an iteration of the model for recycling.
 
-    Implements Algorithm 32.
-    """
+#     Implements Algorithm 32.
+#     """
 
-    def __init__(
-        self,
-        c_m: int,
-        c_z: int,
-        min_bin: float,
-        max_bin: float,
-        no_bins: int,
-        inf: float = 1e8,
-        **kwargs,
-    ):
-        """
-        Args:
-            c_m:
-                MSA channel dimension
-            c_z:
-                Pair embedding channel dimension
-            min_bin:
-                Smallest distogram bin (Angstroms)
-            max_bin:
-                Largest distogram bin (Angstroms)
-            no_bins:
-                Number of distogram bins
-        """
-        super(RecyclingEmbedder, self).__init__()
+#     def __init__(
+#         self,
+#         c_m: int,
+#         c_z: int,
+#         min_bin: float,
+#         max_bin: float,
+#         no_bins: int,
+#         inf: float = 1e8,
+#         **kwargs,
+#     ):
+#         """
+#         Args:
+#             c_m:
+#                 MSA channel dimension
+#             c_z:
+#                 Pair embedding channel dimension
+#             min_bin:
+#                 Smallest distogram bin (Angstroms)
+#             max_bin:
+#                 Largest distogram bin (Angstroms)
+#             no_bins:
+#                 Number of distogram bins
+#         """
+#         super(RecyclingEmbedder, self).__init__()
 
-        self.c_m = c_m
-        self.c_z = c_z
-        self.min_bin = min_bin
-        self.max_bin = max_bin
-        self.no_bins = no_bins
-        self.inf = inf
+#         self.c_m = c_m
+#         self.c_z = c_z
+#         self.min_bin = min_bin
+#         self.max_bin = max_bin
+#         self.no_bins = no_bins
+#         self.inf = inf
 
-        self.linear = Linear(self.no_bins, self.c_z)
-        self.layer_norm_m = LayerNorm(self.c_m)
-        self.layer_norm_z = LayerNorm(self.c_z)
+#         self.linear = Linear(self.no_bins, self.c_z)
+#         self.layer_norm_m = LayerNorm(self.c_m)
+#         self.layer_norm_z = LayerNorm(self.c_z)
 
-    def forward(
-        self,
-        m: torch.Tensor,
-        z: torch.Tensor,
-        x: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            m:
-                First row of the MSA embedding. [*, N_res, C_m]
-            z:
-                [*, N_res, N_res, C_z] pair embedding
-            x:
-                [*, N_res, 3] predicted C_beta coordinates
-        Returns:
-            m:
-                [*, N_res, C_m] MSA embedding update
-            z:
-                [*, N_res, N_res, C_z] pair embedding update
-        """
-        bins = torch.linspace(
-            self.min_bin,
-            self.max_bin,
-            self.no_bins,
-            dtype=x.dtype,
-            device=x.device,
-            requires_grad=False,
-        )
+#     def forward(
+#         self,
+#         m: torch.Tensor,
+#         z: torch.Tensor,
+#         x: torch.Tensor,
+#     ) -> Tuple[torch.Tensor, torch.Tensor]:
+#         """
+#         Args:
+#             m:
+#                 First row of the MSA embedding. [*, N_res, C_m]
+#             z:
+#                 [*, N_res, N_res, C_z] pair embedding
+#             x:
+#                 [*, N_res, 3] predicted C_beta coordinates
+#         Returns:
+#             m:
+#                 [*, N_res, C_m] MSA embedding update
+#             z:
+#                 [*, N_res, N_res, C_z] pair embedding update
+#         """
+#         bins = torch.linspace(
+#             self.min_bin,
+#             self.max_bin,
+#             self.no_bins,
+#             dtype=x.dtype,
+#             device=x.device,
+#             requires_grad=False,
+#         )
 
-        # [*, N, C_m]
-        m_update = self.layer_norm_m(m)
+#         # [*, N, C_m]
+#         m_update = self.layer_norm_m(m)
 
-        # This squared method might become problematic in FP16 mode.
-        # I'm using it because my homegrown method had a stubborn discrepancy I
-        # couldn't find in time.
-        squared_bins = bins ** 2
-        upper = torch.cat(
-            [squared_bins[1:], squared_bins.new_tensor([self.inf])], dim=-1
-        )
-        d = torch.sum(
-            (x[..., None, :] - x[..., None, :, :]) ** 2, dim=-1, keepdims=True
-        )
+#         # This squared method might become problematic in FP16 mode.
+#         # I'm using it because my homegrown method had a stubborn discrepancy I
+#         # couldn't find in time.
+#         squared_bins = bins ** 2
+#         upper = torch.cat(
+#             [squared_bins[1:], squared_bins.new_tensor([self.inf])], dim=-1
+#         )
+#         d = torch.sum(
+#             (x[..., None, :] - x[..., None, :, :]) ** 2, dim=-1, keepdims=True
+#         )
 
-        # [*, N, N, no_bins]
-        d = ((d > squared_bins) * (d < upper)).type(x.dtype)
+#         # [*, N, N, no_bins]
+#         d = ((d > squared_bins) * (d < upper)).type(x.dtype)
 
-        # [*, N, N, C_z]
-        d = self.linear(d)
-        z_update = d + self.layer_norm_z(z)
-
-        return m_update, z_update
+#         # [*, N, N, C_z]
+#         d = self.linear(d)
+#         print(d.shape)
+#         z_update = d + self.layer_norm_z(z)
+#         print(z_update.shape)
+#         return m_update, z_update
 
 
 class TemplateAngleEmbedder(nn.Module):
