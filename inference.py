@@ -99,6 +99,7 @@ def add_data_args(parser: argparse.ArgumentParser):
     parser.add_argument('--release_dates_path', type=str, default=None)
     parser.add_argument('--enable_workflow', default=False, action='store_true', help='run inference with ray workflow or not')
 
+
 def inference_model(rank, world_size, result_q, batch, args):
     os.environ['RANK'] = str(rank)
     os.environ['LOCAL_RANK'] = str(rank)

@@ -57,7 +57,7 @@ def empty_template_feats(n_res) -> FeatureDict:
 def make_template_features(
     input_sequence: str,
     hits: Sequence[Any],
-    template_featurizer: Any,
+    template_featurizer: Union[hhsearch.HHSearch, hmmsearch.Hmmsearch],
     query_pdb_code: Optional[str] = None,
     query_release_date: Optional[str] = None,
 ) -> FeatureDict:
@@ -65,12 +65,18 @@ def make_template_features(
     if(len(hits_cat) == 0 or template_featurizer is None):
         template_features = empty_template_feats(len(input_sequence))
     else:
-        templates_result = template_featurizer.get_templates(
-            query_sequence=input_sequence,
-            query_pdb_code=query_pdb_code,
-            query_release_date=query_release_date,
-            hits=hits_cat,
-        )
+        if type(template_featurizer) == hhsearch.HHSearch:
+            templates_result = template_featurizer.get_templates(
+                query_sequence=input_sequence,
+                query_pdb_code=query_pdb_code,
+                query_release_date=query_release_date,
+                hits=hits_cat,
+            )
+        else:
+            templates_result = template_featurizer.get_templates(
+                query_sequence=input_sequence,
+                hits=hits_cat,
+            )
         template_features = templates_result.features
 
         # The template featurizer doesn't format empty template features
@@ -1117,8 +1123,8 @@ class DataPipelineMultimer:
         uniprot_msa_path = os.path.join(alignment_dir, "uniprot_hits.sto")
         with open(uniprot_msa_path, "r") as fp:
             uniprot_msa_string = fp.read()
-        msa = parsers.parse_stockholm(uniprot_msa_string)
-        all_seq_features = make_msa_features([msa])
+        msa, deletion_matrix, _ = parsers.parse_stockholm(uniprot_msa_string)
+        all_seq_features = make_msa_features(msa, deletion_matrix)
         valid_feats = msa_pairing.MSA_FEATURES + (
             'msa_species_identifiers',
         )
