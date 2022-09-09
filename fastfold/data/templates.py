@@ -188,9 +188,9 @@ def _assess_hhsearch_hit(
     hit: parsers.TemplateHit,
     hit_pdb_code: str,
     query_sequence: str,
-    query_pdb_code: Optional[str],
     release_dates: Mapping[str, datetime.datetime],
     release_date_cutoff: datetime.datetime,
+    query_pdb_code: Optional[str] = None,
     max_subsequence_ratio: float = 0.95,
     min_align_ratio: float = 0.1,
 ) -> bool:
@@ -752,12 +752,12 @@ class SingleHitResult:
 
 def _prefilter_hit(
     query_sequence: str,
-    query_pdb_code: Optional[str],
     hit: parsers.TemplateHit,
     max_template_date: datetime.datetime,
     release_dates: Mapping[str, datetime.datetime],
     obsolete_pdbs: Mapping[str, str],
     strict_error_check: bool = False,
+    query_pdb_code: Optional[str] = None,
 ):
     # Fail hard if we can't get the PDB ID and chain name from the hit.
     hit_pdb_code, hit_chain_id = _get_pdb_id_and_chain(hit)
@@ -794,7 +794,6 @@ def _prefilter_hit(
 
 def _process_single_hit(
     query_sequence: str,
-    query_pdb_code: Optional[str],
     hit: parsers.TemplateHit,
     mmcif_dir: str,
     max_template_date: datetime.datetime,
@@ -803,6 +802,7 @@ def _process_single_hit(
     kalign_binary_path: str,
     strict_error_check: bool = False,
     _zero_center_positions: bool = True,
+    query_pdb_code: Optional[str] = None,
 ) -> SingleHitResult:
     """Tries to extract template features from a single HHSearch hit."""
     # Fail hard if we can't get the PDB ID and chain name from the hit.
@@ -996,9 +996,9 @@ class TemplateHitFeaturizer:
     def get_templates(
         self,
         query_sequence: str,
-        query_pdb_code: Optional[str],
         query_release_date: Optional[datetime.datetime],
         hits: Sequence[parsers.TemplateHit],
+        query_pdb_code: Optional[str] = None,
     ) -> TemplateSearchResult:
         """Computes the templates for given query sequence (more details above)."""
         logging.info("Searching for template for: %s", query_pdb_code)
@@ -1155,7 +1155,7 @@ class HmmsearchHitFeaturizer(TemplateHitFeaturizer):
             idx[:stk] = np.random.permutation(idx[:stk])
 
         for i in idx:
-            if(len(already_seen) >= self._max_hits):
+            if(len(already_seen) >= self.max_hits):
                 break
 
             hit = filtered[i]
