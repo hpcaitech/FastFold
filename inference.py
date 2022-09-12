@@ -85,7 +85,7 @@ def inference_model(rank, world_size, result_q, batch, args):
     fastfold.distributed.init_dap()
     torch.cuda.set_device(rank)
     config = model_config(args.model_name)
-    if args.chunk:
+    if args.chunk_size:
         config.globals.chunk_size = args.chunk_size
     model = AlphaFold(config)
     import_jax_weights_(model, args.param_path, version=args.model_name)

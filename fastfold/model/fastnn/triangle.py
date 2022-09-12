@@ -5,7 +5,7 @@ import torch.nn as nn
 from fastfold.model.fastnn.kernel import LayerNorm
 from fastfold.distributed.comm import col_to_row, row_to_col, scatter
 from fastfold.model.fastnn.kernel import bias_dropout_add, bias_ele_dropout_residual
-from fastfold.model.fastnn.ops import Linear, SelfAttention, Transition
+from fastfold.model.fastnn.ops import Linear, SelfAttention, ChunkTransition, ChunkTriangleAttentionEndingNode, AsyncChunkTriangleMultiplicationOutgoing, AsyncChunkTriangleMultiplicationIncoming, ChunkTriangleAttentionStartingNode
 from fastfold.distributed.comm_async import gather_async_opp, gather_async
 
 
@@ -218,21 +218,21 @@ class PairStack(nn.Module):
         self.n_head = 4
         self.hidden_c = int(d_pair / self.n_head)
 
-        self.TriangleMultiplicationOutgoing = TriangleMultiplicationOutgoing(d_pair,
-                                                                             p_drop=p_drop,
-                                                                             c=d_pair)
-        self.TriangleMultiplicationIncoming = TriangleMultiplicationIncoming(d_pair,
-                                                                             p_drop=p_drop,
-                                                                             c=d_pair)
-        self.TriangleAttentionStartingNode = TriangleAttentionStartingNode(d_pair,
-                                                                           p_drop=p_drop,
-                                                                           c=self.hidden_c,
-                                                                           n_head=self.n_head)
-        self.TriangleAttentionEndingNode = TriangleAttentionEndingNode(d_pair,
-                                                                       p_drop=p_drop,
-                                                                       c=self.hidden_c,
-                                                                       n_head=self.n_head)
-        self.PairTransition = Transition(d=d_pair)
+        self.TriangleMultiplicationOutgoing = AsyncChunkTriangleMultiplicationOutgoing(d_pair,
+                                                                                       p_drop=p_drop,
+                                                                                       c=d_pair)
+        self.TriangleMultiplicationIncoming = AsyncChunkTriangleMultiplicationIncoming(d_pair,
+                                                                                       p_drop=p_drop,
+                                                                                       c=d_pair)
+        self.TriangleAttentionStartingNode = ChunkTriangleAttentionStartingNode(d_pair,
+                                                                                p_drop=p_drop,
+                                                                                c=self.hidden_c,
+                                                                                n_head=self.n_head)
+        self.TriangleAttentionEndingNode = ChunkTriangleAttentionEndingNode(d_pair,
+                                                                            p_drop=p_drop,
+                                                                            c=self.hidden_c,
+                                                                            n_head=self.n_head)
+        self.PairTransition = ChunkTransition(d=d_pair)
 
     def forward(self, pair, pair_mask):
         pair_mask_row = scatter(pair_mask, dim=1)

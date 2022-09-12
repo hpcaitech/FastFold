@@ -56,7 +56,7 @@ class EvoformerBlock(nn.Module):
 
         m = self.msa_stack(m, z, msa_mask)
 
-        z = z + self.communication(m, msa_mask)
+        z += self.communication(m, msa_mask, z)
         m, work = All_to_All_Async.apply(m, 1, 2)
         z = self.pair_stack(z, pair_mask)
         m = All_to_All_Async_Opp.apply(m, work, 1, 2)
