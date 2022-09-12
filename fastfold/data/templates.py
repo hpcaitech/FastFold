@@ -188,9 +188,9 @@ def _assess_hhsearch_hit(
     hit: parsers.TemplateHit,
     hit_pdb_code: str,
     query_sequence: str,
-    query_pdb_code: Optional[str],
     release_dates: Mapping[str, datetime.datetime],
     release_date_cutoff: datetime.datetime,
+    query_pdb_code: Optional[str] = None,
     max_subsequence_ratio: float = 0.95,
     min_align_ratio: float = 0.1,
 ) -> bool:
@@ -752,12 +752,12 @@ class SingleHitResult:
 
 def _prefilter_hit(
     query_sequence: str,
-    query_pdb_code: Optional[str],
     hit: parsers.TemplateHit,
     max_template_date: datetime.datetime,
     release_dates: Mapping[str, datetime.datetime],
     obsolete_pdbs: Mapping[str, str],
     strict_error_check: bool = False,
+    query_pdb_code: Optional[str] = None,
 ):
     # Fail hard if we can't get the PDB ID and chain name from the hit.
     hit_pdb_code, hit_chain_id = _get_pdb_id_and_chain(hit)
@@ -794,7 +794,6 @@ def _prefilter_hit(
 
 def _process_single_hit(
     query_sequence: str,
-    query_pdb_code: Optional[str],
     hit: parsers.TemplateHit,
     mmcif_dir: str,
     max_template_date: datetime.datetime,
@@ -803,6 +802,7 @@ def _process_single_hit(
     kalign_binary_path: str,
     strict_error_check: bool = False,
     _zero_center_positions: bool = True,
+    query_pdb_code: Optional[str] = None,
 ) -> SingleHitResult:
     """Tries to extract template features from a single HHSearch hit."""
     # Fail hard if we can't get the PDB ID and chain name from the hit.
@@ -996,9 +996,9 @@ class TemplateHitFeaturizer:
     def get_templates(
         self,
         query_sequence: str,
-        query_pdb_code: Optional[str],
         query_release_date: Optional[datetime.datetime],
         hits: Sequence[parsers.TemplateHit],
+        query_pdb_code: Optional[str] = None,
     ) -> TemplateSearchResult:
         """Computes the templates for given query sequence (more details above)."""
         logging.info("Searching for template for: %s", query_pdb_code)
@@ -1104,4 +1104,119 @@ class TemplateHitFeaturizer:
 
         return TemplateSearchResult(
             features=template_features, errors=errors, warnings=warnings
+        )
+
+
+class HmmsearchHitFeaturizer(TemplateHitFeaturizer):
+    def get_templates(
+        self,
+        query_sequence: str,
+        hits: Sequence[parsers.TemplateHit]
+    ) -> TemplateSearchResult:
+        logging.info("Searching for template for: %s", query_sequence)
+
+        template_features = {}
+        for template_feature_name in TEMPLATE_FEATURES:
+            template_features[template_feature_name] = []
+
+        already_seen = set()
+        errors = []
+        warnings = []
+
+        # DISCREPANCY: This filtering scheme that saves time
+        filtered = []
+        for hit in hits:
+            prefilter_result = _prefilter_hit(
+                query_sequence=query_sequence,
+                hit=hit,
+                max_template_date=self._max_template_date,
+                release_dates=self._release_dates,
+                obsolete_pdbs=self._obsolete_pdbs,
+                strict_error_check=self._strict_error_check,
+            )
+
+            if prefilter_result.error:
+                errors.append(prefilter_result.error)
+
+            if prefilter_result.warning:
+                warnings.append(prefilter_result.warning)
+
+            if prefilter_result.valid:
+                filtered.append(hit)
+
+        filtered = list(
+            sorted(
+                filtered, key=lambda x: x.sum_probs if x.sum_probs else 0., reverse=True
+            )
+        )
+        idx = list(range(len(filtered)))
+        if(self._shuffle_top_k_prefiltered):
+            stk = self._shuffle_top_k_prefiltered
+            idx[:stk] = np.random.permutation(idx[:stk])
+
+        for i in idx:
+            if(len(already_seen) >= self.max_hits):
+                break
+
+            hit = filtered[i]
+
+            result = _process_single_hit(
+                query_sequence=query_sequence,
+                hit=hit,
+                mmcif_dir=self._mmcif_dir,
+                max_template_date = self._max_template_date,
+                release_dates = self._release_dates,
+                obsolete_pdbs = self._obsolete_pdbs,
+                strict_error_check = self._strict_error_check,
+                kalign_binary_path = self._kalign_binary_path
+            )
+
+            if result.error:
+                errors.append(result.error)
+
+            if result.warning:
+                warnings.append(result.warning)
+
+            if result.features is None:
+                logging.debug(
+                    "Skipped invalid hit %s, error: %s, warning: %s",
+                    hit.name, result.error, result.warning,
+                )
+            else:
+                already_seen_key = result.features["template_sequence"]
+                if(already_seen_key in already_seen):
+                    continue
+                # Increment the hit counter, since we got features out of this hit.
+                already_seen.add(already_seen_key)
+                for k in template_features:
+                    template_features[k].append(result.features[k])
+
+        if already_seen:
+            for name in template_features:
+                template_features[name] = np.stack(
+                    template_features[name], axis=0
+                ).astype(TEMPLATE_FEATURES[name])
+        else:
+            num_res = len(query_sequence)
+            # Construct a default template with all zeros.
+            template_features = {
+                "template_aatype": np.zeros(
+                    (1, num_res, len(residue_constants.restypes_with_x_and_gap)),
+                    np.float32
+                ),
+                "template_all_atom_masks": np.zeros(
+                    (1, num_res, residue_constants.atom_type_num), np.float32
+                ),
+                "template_all_atom_positions": np.zeros(
+                    (1, num_res, residue_constants.atom_type_num, 3), np.float32
+                ),
+                "template_domain_names": np.array([''.encode()], dtype=np.object),
+                "template_sequence": np.array([''.encode()], dtype=np.object),
+                "template_sum_probs": np.array([0], dtype=np.float32),
+            }
+
+        return TemplateSearchResult(
+            features=template_features,
+            errors=errors,
+            warnings=warnings,
         )

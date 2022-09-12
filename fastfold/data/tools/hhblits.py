@@ -46,6 +46,7 @@ class HHBlits:
         alt: Optional[int] = None,
         p: int = _HHBLITS_DEFAULT_P,
         z: int = _HHBLITS_DEFAULT_Z,
+        cov: int = 0,
     ):
         """Initializes the Python HHblits wrapper.
 
@@ -71,6 +72,8 @@ class HHBlits:
             HHblits default: 20.
           z: Hard cap on number of hits reported in the hhr file.
             HHblits default: 500. NB: The relevant HHblits flag is -Z not -z.
+          cov: Minimum coverage with master sequence (%).
+            HHBlits default: 0
 
         Raises:
           RuntimeError: If HHblits binary not found within the path.
@@ -98,6 +101,7 @@ class HHBlits:
         self.alt = alt
         self.p = p
         self.z = z
+        self.cov = cov
 
     def query(self, input_fasta_path: str) -> Mapping[str, Any]:
         """Queries the database using HHblits."""
@@ -139,6 +143,8 @@ class HHBlits:
                 cmd += ["-p", str(self.p)]
             if self.z != _HHBLITS_DEFAULT_Z:
                 cmd += ["-Z", str(self.z)]
+            if self.cov:
+                cmd += ["-cov", str(self.cov)]
             cmd += db_cmd
 
             logging.info('Launching subprocess "%s"', " ".join(cmd))

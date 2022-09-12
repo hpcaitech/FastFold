@@ -1,4 +1,18 @@
 from typing import Tuple
+# Copyright 2022 BioMap (Beijing) Intelligence Technology Limited
+# Copyright 2022 HPC-AI Technology Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -745,3 +759,71 @@ class RecyclingEmbedder(nn.Module):
             z[i:i + chunk_size, :, :] = di + self.layer_norm_z(z[i:i + chunk_size, :, :])
 
         return m_update, z
+
+
+class GlobalAttention(nn.Module):
+    """
+    Multi-Head SelfAttention dealing with [batch_size1, batch_size2, len, dim] tensors
+    """
+
+    def __init__(self, qkv_dim, c, n_head, out_dim):
+        super(GlobalAttention, self).__init__()
+        self.qkv_dim = qkv_dim
+        self.c = c
+        self.n_head = n_head
+        self.out_dim = out_dim
+
+        self.scaling = self.c ** (-0.5)
+
+        self.eps = 1e-10
+        self.inf = 1e9
+
+        self.to_q = Linear(qkv_dim, c * self.n_head, use_bias=False)
+        self.to_kv = Linear(qkv_dim, 2 * c, initializer="linear", use_bias=False)
+
+        self.gating_bias = nn.parameter.Parameter(data=torch.ones((n_head * c,)))
+        self.gating_linear = Linear(
+            qkv_dim, n_head * c, initializer="zero", use_bias=False
+        )
+
+        self.o_linear = Linear(n_head * c, out_dim, initializer="zero")
+
+    def forward(self, m, mask):
+
+        para_dim = m.shape[1]
+        chunk_size = CHUNK_SIZE
+        if CHUNK_SIZE == None:
+            chunk_size = para_dim
+
+        output = []
+        for ax in range(0, para_dim, chunk_size):
+
+            m_part = m[:, ax : ax + chunk_size, :, :]
+            mask_part = mask[:, ax : ax + chunk_size, :]
+
+            q = torch.sum(m_part * mask_part.unsqueeze(-1), dim=-2) / (
+                torch.sum(mask_part, dim=-1)[..., None] + self.eps
+            )
+
+            q = self.to_q(q)
+            q = q.view(q.shape[:-1] + (self.n_head, -1))
+
+            k, v = self.to_kv(m_part).chunk(2, dim=-1)
+
+            logits = torch.matmul(q, k.transpose(-1, -2))
+
+            weights = mask_softmax(logits, mask_part)
+
+            weighted_avg = torch.matmul(weights, v)
+            weighted_avg = rearrange(weighted_avg, "b1 b2 h d -> b1 b2 (h d)")
+
+            gate_values = self.gating_linear(m_part)
+            weighted_avg = bias_sigmod_ele(
+                gate_values, self.gating_bias, weighted_avg.unsqueeze(-2)
+            )
+
+            output.append(self.o_linear(weighted_avg))
+
+        m = torch.cat(output, dim=1)
+
+        return m

@@ -18,13 +18,15 @@ FastFold provides a **high-performance implementation of Evoformer** with the fo
 3. Ease of use
     * Huge performance gains with a few lines changes
     * You don't need to care about how the parallel part is implemented
+4. Faster data processing, about 3x times faster than the original way
 
 ## Installation
 
 To install and use FastFold, you will need:
-+ Python 3.8 or later
++ Python 3.8 or 3.9.
 + [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) 11.1 or above
 + PyTorch 1.10 or above 
+
 
 For now, You can install FastFold:
 ### Using Conda (Recommended)
@@ -37,7 +39,6 @@ git clone https://github.com/hpcaitech/FastFold
 cd FastFold
 conda env create --name=fastfold -f environment.yml
 conda activate fastfold
-bash scripts/patch_openmm.sh
 python setup.py install
 ```
 
@@ -57,7 +58,7 @@ Run the following command to build a docker image from Dockerfile provided.
 
 ```shell
 cd ColossalAI
-docker build -t fastfold ./docker
+docker build -t Fastfold ./docker
 ```
 
 Run the following command to start the docker container in interactive mode.
@@ -116,6 +117,32 @@ python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
     --hhsearch_binary_path `which hhsearch` \
     --kalign_binary_path `which kalign`
 ```
+or run the script `./inference.sh`, you can change the parameter in the script, especisally those data path.
+```shell
+./inference.sh
+```
+
+#### inference with data workflow
+Alphafold's data pre-processing takes a lot of time, so we speed up the data pre-process by [ray](https://docs.ray.io/en/latest/workflows/concepts.html) workflow, which achieves a 3x times faster speed. To run the inference with ray workflow, you should install the package and add parameter `--enable_workflow` to cmdline or shell script `./inference.sh`
+```shell
+pip install ray==2.0.0 pyarrow
+```
+```shell
+python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
+    --output_dir ./ \
+    --gpus 2 \
+    --uniref90_database_path data/uniref90/uniref90.fasta \
+    --mgnify_database_path data/mgnify/mgy_clusters_2018_12.fa \
+    --pdb70_database_path data/pdb70/pdb70 \
+    --uniclust30_database_path data/uniclust30/uniclust30_2018_08/uniclust30_2018_08 \
+    --bfd_database_path data/bfd/bfd_metaclust_clu_complete_id30_c90_final_seq.sorted_opt \
+    --jackhmmer_binary_path `which jackhmmer` \
+    --hhblits_binary_path `which hhblits` \
+    --hhsearch_binary_path `which hhsearch` \
+    --kalign_binary_path `which kalign`  \
+    --enable_workflow 
+```
+
 
 ## Performance Benchmark
 

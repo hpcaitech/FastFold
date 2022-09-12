@@ -142,6 +142,7 @@ class TemplatePairStackBlock(nn.Module):
         pair_transition_n: int,
         dropout_rate: float,
         inf: float,
+        is_multimer: bool=False,
         **kwargs,
     ):
         super(TemplatePairStackBlock, self).__init__()
@@ -153,6 +154,7 @@ class TemplatePairStackBlock(nn.Module):
         self.pair_transition_n = pair_transition_n
         self.dropout_rate = dropout_rate
         self.inf = inf
+        self.is_multimer = is_multimer
 
         self.dropout_row = DropoutRowwise(self.dropout_rate)
         self.dropout_col = DropoutColumnwise(self.dropout_rate)
@@ -196,43 +198,67 @@ class TemplatePairStackBlock(nn.Module):
         single_templates_masks = [
             m.unsqueeze(-3) for m in torch.unbind(mask, dim=-3)
         ]
-        for i in range(len(single_templates)):
-            single = single_templates[i]
-            single_mask = single_templates_masks[i]
-            
-            single = single + self.dropout_row(
-                self.tri_att_start(
+        if not self.is_multimer:
+            for i in range(len(single_templates)):
+                single = single_templates[i]
+                single_mask = single_templates_masks[i]
+                
+                single = single + self.dropout_row(
+                    self.tri_att_start(
+                        single,
+                        chunk_size=chunk_size,
+                        mask=single_mask
+                    )
+                )
+                single = single + self.dropout_col(
+                    self.tri_att_end(
+                        single,
+                        chunk_size=chunk_size,
+                        mask=single_mask
+                    )
+                )
+                single = single + self.dropout_row(
+                    self.tri_mul_out(
+                        single,
+                        mask=single_mask
+                    )
+                )
+                single = single + self.dropout_row(
+                    self.tri_mul_in(
+                        single,
+                        mask=single_mask
+                    )
+                )
+                single = single + self.pair_transition(
                     single,
+                    mask=single_mask if _mask_trans else None,
                     chunk_size=chunk_size,
-                    mask=single_mask
                 )
-            )
-            single = single + self.dropout_col(
-                self.tri_att_end(
-                    single,
-                    chunk_size=chunk_size,
-                    mask=single_mask
-                )
-            )
-            single = single + self.dropout_row(
-                self.tri_mul_out(
-                    single,
-                    mask=single_mask
-                )
-            )
-            single = single + self.dropout_row(
-                self.tri_mul_in(
-                    single,
-                    mask=single_mask
-                )
-            )
-            single = single + self.pair_transition(
-                single,
-                mask=single_mask if _mask_trans else None,
-                chunk_size=chunk_size,
-            )
 
-            single_templates[i] = single
+                single_templates[i] = single
+        else:
+            for i in range(len(single_templates)):
+                single = single_templates[i]
+                single_mask = single_templates_masks[i]
+
+                single = single + self.dropout_row(
+                    self.tri_att_start(single, chunk_size=chunk_size, mask=single_mask)
+                )
+                single = single + self.dropout_col(
+                    self.tri_att_end(single, chunk_size=chunk_size, mask=single_mask)
+                )
+                single = single + self.dropout_row(
+                    self.tri_mul_out(single, mask=single_mask)
+                )
+                single = single + self.dropout_row(
+                    self.tri_mul_in(single, mask=single_mask)
+                )
+                single = single + self.pair_transition(
+                    single,
+                    mask=single_mask if _mask_trans else None,
+                    chunk_size=chunk_size,
+                )
+                single_templates[i] = single
 
         z = torch.cat(single_templates, dim=-4)
 

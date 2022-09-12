@@ -16,13 +16,14 @@ dependencies:
       - typing-extensions==3.10.0.2
       - einops
       - colossalai
+      - pandas
       - --find-links https://download.pytorch.org/whl/cu113/torch_stable.html torch==1.11.1+cu113
       - --find-links https://download.pytorch.org/whl/cu113/torch_stable.html torchaudio==0.11.1+cu113
       - --find-links https://download.pytorch.org/whl/cu113/torch_stable.html torchvision==0.13.1
   - conda-forge::python=3.8
   - conda-forge::setuptools=59.5.0
   - conda-forge::pip
-  - conda-forge::openmm=7.5.1
+  - conda-forge::openmm=7.7.0
   - conda-forge::pdbfixer
   - bioconda::hmmer==3.3.2
   - bioconda::hhsuite==3.3.0
