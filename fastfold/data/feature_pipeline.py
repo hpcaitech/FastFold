@@ -76,8 +76,9 @@ def np_example_to_features(
     mode: str,
 ):
     np_example = dict(np_example)
+    print("np_example seq_length", np_example["seq_length"])
     if is_multimer:
-        num_res = int(np_example["seq_length"])
+        num_res = int(np_example["seq_length"][0])
     else:
         num_res = int(np_example["seq_length"][0])
     cfg, feature_names = make_data_config(config, mode=mode, num_res=num_res)

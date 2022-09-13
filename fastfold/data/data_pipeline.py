@@ -34,6 +34,7 @@ from fastfold.data import (
     msa_pairing,
     feature_processing_multimer,
 )
+from fastfold.data import templates
 from fastfold.data.parsers import Msa
 from fastfold.data.tools import jackhmmer, hhblits, hhsearch, hmmsearch
 from fastfold.data.tools.utils import to_date 
@@ -57,7 +58,7 @@ def empty_template_feats(n_res) -> FeatureDict:
 def make_template_features(
     input_sequence: str,
     hits: Sequence[Any],
-    template_featurizer: Union[hhsearch.HHSearch, hmmsearch.Hmmsearch],
+    template_featurizer: Union[templates.TemplateHitFeaturizer, templates.HmmsearchHitFeaturizer],
     query_pdb_code: Optional[str] = None,
     query_release_date: Optional[str] = None,
 ) -> FeatureDict:
@@ -65,7 +66,7 @@ def make_template_features(
     if(len(hits_cat) == 0 or template_featurizer is None):
         template_features = empty_template_feats(len(input_sequence))
     else:
-        if type(template_featurizer) == hhsearch.HHSearch:
+        if type(template_featurizer) == templates.TemplateHitFeaturizer:
             templates_result = template_featurizer.get_templates(
                 query_sequence=input_sequence,
                 query_pdb_code=query_pdb_code,
@@ -202,32 +203,35 @@ def make_pdb_features(
     return pdb_feats
 
 
-def make_msa_features(
-    msas: Sequence[Sequence[str]],
-    deletion_matrices: Sequence[parsers.DeletionMatrix],
-) -> FeatureDict:
+def make_msa_features(msas: Sequence[parsers.Msa]) -> FeatureDict:
     """Constructs a feature dict of MSA features."""
     if not msas:
         raise ValueError("At least one MSA must be provided.")
 
     int_msa = []
     deletion_matrix = []
+    species_ids = []
     seen_sequences = set()
     for msa_index, msa in enumerate(msas):
         if not msa:
             raise ValueError(
                 f"MSA {msa_index} must contain at least one sequence."
             )
-        for sequence_index, sequence in enumerate(msa):
+        for sequence_index, sequence in enumerate(msa.sequences):
             if sequence in seen_sequences:
                 continue
             seen_sequences.add(sequence)
             int_msa.append(
                 [residue_constants.HHBLITS_AA_TO_ID[res] for res in sequence]
             )
-            deletion_matrix.append(deletion_matrices[msa_index][sequence_index])
 
-    num_res = len(msas[0][0])
+            deletion_matrix.append(msa.deletion_matrix[sequence_index])
+            identifiers = msa_identifiers.get_identifiers(
+                msa.descriptions[sequence_index]
+            )
+            species_ids.append(identifiers.species_id.encode('utf-8'))
+
+    num_res = len(msas[0].sequences[0])
     num_alignments = len(int_msa)
     features = {}
     features["deletion_matrix_int"] = np.array(deletion_matrix, dtype=np.int32)
@@ -235,8 +239,8 @@ def make_msa_features(
     features["num_alignments"] = np.array(
         [num_alignments] * num_res, dtype=np.int32
     )
+    features["msa_species_identifiers"] = np.array(species_ids, dtype=np.object_)
     return features
-
 
 def run_msa_tool(
     msa_runner,
@@ -455,7 +459,7 @@ class AlignmentRunner:
 
 
 
-class AlignmentRunnerMultimer(AlignmentRunner):
+class AlignmentRunnerMultimer:
     """Runs alignment tools and saves the results"""
 
     def __init__(
@@ -504,7 +508,6 @@ class AlignmentRunnerMultimer(AlignmentRunner):
             mgnify_max_hits:
                 Max number of mgnify hits
         """
-        # super().__init__()
         db_map = {
             "jackhmmer": {
                 "binary": jackhmmer_binary_path,
@@ -810,43 +813,41 @@ class DataPipeline:
                 return msa
 
             for (name, start, size) in _alignment_index["files"]:
-                ext = os.path.splitext(name)[-1]
+                filename, ext = os.path.splitext(name)
 
                 if(ext == ".a3m"):
-                    msa, deletion_matrix = parsers.parse_a3m(
+                    msa = parsers.parse_a3m(
                         read_msa(start, size)
                     )
-                    data = {"msa": msa, "deletion_matrix": deletion_matrix}
-                elif(ext == ".sto"):
-                    msa, deletion_matrix, _ = parsers.parse_stockholm(
+                # The "hmm_output" exception is a crude way to exclude
+                # multimer template hits.
+                elif(ext == ".sto" and not "hmm_output" == filename):
+                    msa = parsers.parse_stockholm(
                         read_msa(start, size)
                     )
-                    data = {"msa": msa, "deletion_matrix": deletion_matrix}
                 else:
                     continue
                
-                msa_data[name] = data
+                msa_data[name] =msa
             
             fp.close()
         else: 
             for f in os.listdir(alignment_dir):
                 path = os.path.join(alignment_dir, f)
-                ext = os.path.splitext(f)[-1]
+                filename, ext = os.path.splitext(f)
 
                 if(ext == ".a3m"):
                     with open(path, "r") as fp:
-                        msa, deletion_matrix = parsers.parse_a3m(fp.read())
-                    data = {"msa": msa, "deletion_matrix": deletion_matrix}
-                elif(ext == ".sto"):
+                        msa = parsers.parse_a3m(fp.read())
+                elif(ext == ".sto" and not "hmm_output" == filename):
                     with open(path, "r") as fp:
-                        msa, deletion_matrix, _ = parsers.parse_stockholm(
+                        msa = parsers.parse_stockholm(
                             fp.read()
                         )
-                    data = {"msa": msa, "deletion_matrix": deletion_matrix}
                 else:
                     continue
                 
-                msa_data[f] = data
+                msa_data[f] = msa
 
         return msa_data
 
@@ -913,19 +914,13 @@ class DataPipeline:
                     must be provided.
                     """
                 )
-            msa_data["dummy"] = {
-                "msa": [input_sequence],
-                "deletion_matrix": [[0 for _ in input_sequence]],
-            }
+            msa_data["dummy"] = Msa(
+                [input_sequence],
+                [[0 for _ in input_sequence]],
+                ["dummy"]
+            )
 
-        msas, deletion_matrices = zip(*[
-            (v["msa"], v["deletion_matrix"]) for v in msa_data.values()
-        ])
-
-        msa_features = make_msa_features(
-            msas=msas,
-            deletion_matrices=deletion_matrices,
-        )
+        msa_features = make_msa_features(list(msa_data.values()))
 
         return msa_features
 
@@ -996,7 +991,10 @@ class DataPipeline:
         mmcif_feats = make_mmcif_features(mmcif, chain_id)
 
         input_sequence = mmcif.chain_to_seqres[chain_id]
-        hits = self._parse_template_hits(alignment_dir, _alignment_index)
+        hits = self._parse_template_hits(
+            alignment_dir,
+            input_sequence,
+            _alignment_index)
         template_features = make_template_features(
             input_sequence,
             hits,
@@ -1014,13 +1012,24 @@ class DataPipeline:
         alignment_dir: str,
         is_distillation: bool = True,
         chain_id: Optional[str] = None,
+        _structure_index: Optional[str] = None,
         _alignment_index: Optional[str] = None,
     ) -> FeatureDict:
         """
             Assembles features for a protein in a PDB file.
         """
-        with open(pdb_path, 'r') as f:
-            pdb_str = f.read()
+        if(_structure_index is not None):
+            db_dir = os.path.dirname(pdb_path)
+            db = _structure_index["db"]
+            db_path = os.path.join(db_dir, db)
+            fp = open(db_path, "rb")
+            _, offset, length = _structure_index["files"][0]
+            fp.seek(offset)
+            pdb_str = fp.read(length).decode("utf-8")
+            fp.close()
+        else:
+            with open(pdb_path, 'r') as f:
+                pdb_str = f.read()
 
         protein_object = protein.from_pdb_string(pdb_str, chain_id)
         input_sequence = _aatype_to_str_sequence(protein_object.aatype) 
@@ -1028,10 +1037,14 @@ class DataPipeline:
         pdb_feats = make_pdb_features(
             protein_object, 
             description, 
-            is_distillation
+            is_distillation=is_distillation
         )
 
-        hits = self._parse_template_hits(alignment_dir, _alignment_index)
+        hits = self._parse_template_hits(
+            alignment_dir, 
+            input_sequence,
+            _alignment_index
+        )
         template_features = make_template_features(
             input_sequence,
             hits,
@@ -1059,7 +1072,11 @@ class DataPipeline:
         description = os.path.splitext(os.path.basename(core_path))[0].upper()
         core_feats = make_protein_features(protein_object, description)
         
-        hits = self._parse_template_hits(alignment_dir, _alignment_index)
+        hits = self._parse_template_hits(
+            alignment_dir, 
+            input_sequence,
+            _alignment_index
+        )
         template_features = make_template_features(
             input_sequence,
             hits,
@@ -1123,8 +1140,8 @@ class DataPipelineMultimer:
         uniprot_msa_path = os.path.join(alignment_dir, "uniprot_hits.sto")
         with open(uniprot_msa_path, "r") as fp:
             uniprot_msa_string = fp.read()
-        msa, deletion_matrix, _ = parsers.parse_stockholm(uniprot_msa_string)
-        all_seq_features = make_msa_features(msa, deletion_matrix)
+        msa = parsers.parse_stockholm(uniprot_msa_string)
+        all_seq_features = make_msa_features([msa])
         valid_feats = msa_pairing.MSA_FEATURES + (
             'msa_species_identifiers',
         )

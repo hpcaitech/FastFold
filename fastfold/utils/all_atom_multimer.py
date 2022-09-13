@@ -18,7 +18,12 @@ from typing import Dict, Text, Tuple
 
 import torch
 
-from fastfold.np import residue_constants as rc
+from fastfold.common import residue_const
+
+
+
+
+ants as rc
 from fastfold.utils import geometry, tensor_utils
 import numpy as np
 

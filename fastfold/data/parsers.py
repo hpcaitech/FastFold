@@ -96,9 +96,7 @@ def parse_fasta(fasta_string: str) -> Tuple[Sequence[str], Sequence[str]]:
     return sequences, descriptions
 
 
-def parse_stockholm(
-    stockholm_string: str,
-) -> Tuple[Sequence[str], DeletionMatrix, Sequence[str]]:
+def parse_stockholm(stockholm_string: str) -> Msa:
     """Parses sequences and deletion matrix from stockholm format alignment.
 
     Args:
@@ -153,10 +151,14 @@ def parse_stockholm(
                     deletion_count = 0
         deletion_matrix.append(deletion_vec)
 
-    return msa, deletion_matrix, list(name_to_sequence.keys())
+    return Msa(
+        sequences=msa, 
+        deletion_matrix=deletion_matrix, 
+        descriptions=list(name_to_sequence.keys())
+    )
 
 
-def parse_a3m(a3m_string: str) -> Tuple[Sequence[str], DeletionMatrix]:
+def parse_a3m(a3m_string: str) -> Msa:
     """Parses sequences and deletion matrix from a3m format alignment.
 
     Args:
@@ -171,7 +173,7 @@ def parse_a3m(a3m_string: str) -> Tuple[Sequence[str], DeletionMatrix]:
                 at `deletion_matrix[i][j]` is the number of residues deleted from
                 the aligned sequence i at residue position j.
     """
-    sequences, _ = parse_fasta(a3m_string)
+    sequences, descriptions = parse_fasta(a3m_string) 
     deletion_matrix = []
     for msa_sequence in sequences:
         deletion_vec = []
@@ -187,8 +189,12 @@ def parse_a3m(a3m_string: str) -> Tuple[Sequence[str], DeletionMatrix]:
     # Make the MSA matrix out of aligned (deletion-free) sequences.
     deletion_table = str.maketrans("", "", string.ascii_lowercase)
     aligned_sequences = [s.translate(deletion_table) for s in sequences]
-    return aligned_sequences, deletion_matrix
-    
+    return Msa(
+        sequences=aligned_sequences, 
+        deletion_matrix=deletion_matrix,
+        descriptions=descriptions
+    )    
+
 
 def _convert_sto_seq_to_a3m(
     query_non_gaps: Sequence[bool], sto_seq: str

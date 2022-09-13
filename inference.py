@@ -142,7 +142,6 @@ def main(args):
 def inference_multimer_model(args):
     print("running in multimer mode...")
     config = model_config(args.model_name)
-    # feature_dict = pickle.load(open("/home/lcmql/data/features_pdb1o5d.pkl", "rb"))
     
     predict_max_templates = 4
 
@@ -235,10 +234,54 @@ def inference_multimer_model(args):
     feature_dict = data_processor.process_fasta(
         fasta_path=fasta_path, alignment_dir=local_alignment_dir
     )
+    # feature_dict = pickle.load(open("/home/lcmql/data/features_pdb1o5d.pkl", "rb"))
 
     processed_feature_dict = feature_processor.process_features(
         feature_dict, mode='predict', is_multimer=True,
     )
+
+    batch = processed_feature_dict
+
+    manager = mp.Manager()
+    result_q = manager.Queue()
+    torch.multiprocessing.spawn(inference_model, nprocs=args.gpus, args=(args.gpus, result_q, batch, args))
+
+    out = result_q.get()
+
+    # Toss out the recycling dimensions --- we don't need them anymore
+    batch = tensor_tree_map(lambda x: np.array(x[..., -1].cpu()), batch)
+    
+    plddt = out["plddt"]
+    mean_plddt = np.mean(plddt)
+
+    plddt_b_factors = np.repeat(plddt[..., None], residue_constants.atom_type_num, axis=-1)
+
+    unrelaxed_protein = protein.from_prediction(features=batch,
+                                                result=out,
+                                                b_factors=plddt_b_factors)
+
+    # Save the unrelaxed PDB.
+    unrelaxed_output_path = os.path.join(args.output_dir,
+                                            f'{tag}_{args.model_name}_unrelaxed.pdb')
+    with open(unrelaxed_output_path, 'w') as f:
+        f.write(protein.to_pdb(unrelaxed_protein))
+
+    amber_relaxer = relax.AmberRelaxation(
+        use_gpu=True,
+        **config.relax,
+    )
+
+    # Relax the prediction.
+    t = time.perf_counter()
+    relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_protein)
+    print(f"Relaxation time: {time.perf_counter() - t}")
+
+    # Save the relaxed PDB.
+    relaxed_output_path = os.path.join(args.output_dir,
+                                        f'{tag}_{args.model_name}_relaxed.pdb')
+    with open(relaxed_output_path, 'w') as f:
+        f.write(relaxed_pdb_str)
+
 
 def inference_monomer_model(args):
     print("running in monomer mode...")
