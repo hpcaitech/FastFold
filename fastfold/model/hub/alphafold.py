@@ -202,6 +202,7 @@ class AlphaFold(nn.Module):
             feats["residue_index"],
             feats["msa_feat"],
         )
+        print("embed %.4fG" % (torch.cuda.max_memory_allocated() / (1024 ** 3)))
 
         # Initialize the recycling embeddings, if needs be
         if None in [m_1_prev, z_prev, x_prev]:
@@ -229,7 +230,7 @@ class AlphaFold(nn.Module):
 
         # m_1_prev_emb: [*, N, C_m]
         # z_prev_emb: [*, N, N, C_z]
-        m_1_prev_emb, z_prev_emb = self.recycling_embedder(
+        m_1_prev, z_prev = self.recycling_embedder(
             m_1_prev,
             z_prev,
             x_prev,
@@ -240,17 +241,19 @@ class AlphaFold(nn.Module):
         # conditionally to avoid leaving parameters unused, which has annoying
         # implications for DDP training.
         if(not _recycle):
-            m_1_prev_emb *= 0
-            z_prev_emb *= 0
+            m_1_prev *= 0
+            z_prev *= 0
 
         # [*, S_c, N, C_m]
-        m[..., 0, :, :] += m_1_prev_emb
+        m[..., 0, :, :] += m_1_prev
 
         # [*, N, N, C_z]
-        z += z_prev_emb
+        z += z_prev
 
         # Possibly prevents memory fragmentation
-        del m_1_prev, z_prev, x_prev, m_1_prev_emb, z_prev_emb
+        del m_1_prev, z_prev, x_prev
+        
+        print("cycle %.4fG" % (torch.cuda.max_memory_allocated() / (1024 ** 3)))
 
         # Embed the templates + merge with MSA/pair embeddings
         if self.config.template.enabled:
@@ -265,7 +268,7 @@ class AlphaFold(nn.Module):
             )
 
             # [*, N, N, C_z]
-            z = z + template_embeds["template_pair_embedding"]
+            z += template_embeds["template_pair_embedding"]
 
             if self.config.template.embed_angles:
                 # [*, S = S_c + S_t, N, C_m]
@@ -295,6 +298,7 @@ class AlphaFold(nn.Module):
                 pair_mask=pair_mask.to(dtype=z.dtype),
                 _mask_trans=self.config._mask_trans,
             )
+        print("msaex %.4fG" % (torch.cuda.max_memory_allocated() / (1024 ** 3)))
 
         # Run MSA + pair embeddings through the trunk of the network
         # m: [*, S, N, C_m]

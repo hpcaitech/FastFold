@@ -55,8 +55,10 @@ class EvoformerBlock(nn.Module):
         pair_mask = torch.nn.functional.pad(pair_mask, (0, padding_size, 0, padding_size))
 
         m = self.msa_stack(m, z, msa_mask)
+        print("msa %.4fG" % (torch.cuda.max_memory_allocated() / (1024 ** 3)))
 
         z += self.communication(m, msa_mask, z)
+        print("comm %.4fG" % (torch.cuda.max_memory_allocated() / (1024 ** 3)))
         m, work = All_to_All_Async.apply(m, 1, 2)
         z = self.pair_stack(z, pair_mask)
         m = All_to_All_Async_Opp.apply(m, work, 1, 2)
