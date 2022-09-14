@@ -123,20 +123,32 @@ class FastFoldDataWorkFlow:
         # generate workflow for STEP3
         jh_node_2 = jh_fac.gen_node(fasta_path, mgnify_out_path)
 
-        # Run HHBlits on BFD
-        # create HHBlits workflow generator
-        hhb_config = {
-            "binary_path": self.db_map["hhblits"]["binary"],
-            "databases": self.db_map["hhblits"]["dbs"],
-            "n_cpu": self.no_cpus,
-        }
-        hhb_fac = HHBlitsFactory(config=hhb_config)
-        # set HHBlits output path
-        bfd_out_path = os.path.join(alignment_dir, "bfd_uniclust_hits.a3m")
-        # generate workflow for STEP4
-        hhb_node = hhb_fac.gen_node(fasta_path, bfd_out_path)
+        if not self.use_small_bfd:
+            # Run HHBlits on BFD
+            # create HHBlits workflow generator
+            hhb_config = {
+                "binary_path": self.db_map["hhblits"]["binary"],
+                "databases": self.db_map["hhblits"]["dbs"],
+                "n_cpu": self.no_cpus,
+            }
+            hhb_fac = HHBlitsFactory(config=hhb_config)
+            # set HHBlits output path
+            bfd_out_path = os.path.join(alignment_dir, "bfd_uniclust_hits.a3m")
+            # generate workflow for STEP4
+            hhb_node = hhb_fac.gen_node(fasta_path, bfd_out_path)
 
-        # run workflow
-        batch_run(workflow_id=workflow_id, dags=[hhs_node, jh_node_2, hhb_node])
+            # run workflow
+            batch_run(workflow_id=workflow_id, dags=[hhs_node, jh_node_2, hhb_node])
+        else:
+            # Run Jackhmmer on small_bfd
+            # reconfigure jackhmmer factory to use small_bfd DB instead
+            jh_fac.configure('database_path', self.db_map["jackhmmer"]["dbs"][2])
+            # set jackhmmer output path
+            bfd_out_path = os.path.join(alignment_dir, "bfd_uniclust_hits.a3m")
+            # generate workflow for STEP4_2
+            jh_node_3 = jh_fac.gen_node(fasta_path, bfd_out_path)
+
+            # run workflow
+            batch_run(workflow_id=workflow_id, dags=[hhs_node, jh_node_2, jh_node_3]) 
 
         return
