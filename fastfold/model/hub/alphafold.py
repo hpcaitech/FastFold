@@ -273,8 +273,10 @@ class AlphaFold(nn.Module):
                 feats["template_torsion_angles_mask"] = (
                     template_embeds["template_mask"]
                 )
+                # [*, N, N, C_z]
+                z = z + template_embeds["template_pair_embedding"]
             else:
-                template_embeds = self.template_embedder(
+                template_embeds, z = self.template_embedder(
                     template_feats,
                     z,
                     pair_mask.to(dtype=z.dtype),
