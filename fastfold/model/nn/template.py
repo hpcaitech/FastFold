@@ -353,7 +353,6 @@ class TemplatePairStack(nn.Module):
             args=(t,),
             blocks_per_ckpt=self.blocks_per_ckpt if self.training else None,
         )
-
-        t = self.layer_norm(t)
-
+        for i in range(0, t.shape[0], chunk_size):
+            t[i:i + chunk_size] = self.layer_norm(t[i:i + chunk_size])
         return t

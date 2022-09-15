@@ -112,7 +112,12 @@ def build_template_pair_feat(
     use_unit_vector: bool = False,
     eps: float = 1e-20,
     inf: float = 1e8,
-):
+    chunk=None
+):  
+    if 1 <= chunk <= 4:
+        for k, v in batch.items():
+            batch[k] = v.cpu()
+
     template_mask = batch["template_pseudo_beta_mask"]
     template_mask_2d = template_mask[..., None] * template_mask[..., None, :]
 
@@ -146,11 +151,13 @@ def build_template_pair_feat(
     )
     points = rigids.get_trans()[..., None, :, :]
     rigid_vec = rigids[..., None].invert_apply(points)
+    del rigids, points
 
     inv_distance_scalar = torch.rsqrt(eps + torch.sum(rigid_vec**2, dim=-1))
 
     t_aa_masks = batch["template_all_atom_mask"]
     template_mask = t_aa_masks[..., n] * t_aa_masks[..., ca] * t_aa_masks[..., c]
+    del t_aa_masks, n, ca, c
     template_mask_2d = template_mask[..., None] * template_mask[..., None, :]
 
     inv_distance_scalar = inv_distance_scalar * template_mask_2d

@@ -263,6 +263,12 @@ class TemplateEmbedder(nn.Module):
         # Embed the templates one at a time (with a poor man's vmap)
         template_embeds = []
         n_templ = batch["template_aatype"].shape[templ_dim]
+
+        if 1 <= chunk_size <= 4:
+            t = torch.empty((n_templ, z.shape[0], z.shape[1], 64), dtype=z.dtype, device='cpu')
+        else:
+            t = torch.empty((n_templ, z.shape[0], z.shape[1], 64), dtype=z.dtype, device=z.device)
+
         for i in range(n_templ):
             idx = batch["template_aatype"].new_tensor(i)
             single_template_feats = tensor_tree_map(
@@ -282,48 +288,50 @@ class TemplateEmbedder(nn.Module):
                 single_template_embeds["angle"] = a
 
             # [*, S_t, N, N, C_t]
-            t = build_template_pair_feat(
+            tt = build_template_pair_feat(
                 single_template_feats,
                 use_unit_vector=self.config.use_unit_vector,
                 inf=self.config.inf,
+                chunk=chunk_size,
                 eps=self.config.eps,
                 **self.config.distogram,
-            ).to(z.dtype)
-            t = self.template_pair_embedder(t)
+            ).to(z.dtype).to(z.device)
 
-            single_template_embeds.update({"pair": t})
+            tt = self.template_pair_embedder(tt)
+            # single_template_embeds.update({"pair": t})
 
             template_embeds.append(single_template_embeds)
+            # [*, S_t, N, N, C_z]
+            t[i] = self.template_pair_stack(
+                tt, 
+                pair_mask.unsqueeze(-3).to(dtype=z.dtype), 
+                chunk_size=chunk_size,
+                _mask_trans=_mask_trans,
+            ).to(t.device)
+        del tt, single_template_embeds, single_template_feats
 
         template_embeds = dict_multimap(
             partial(torch.cat, dim=templ_dim),
             template_embeds,
         )
 
-        # [*, S_t, N, N, C_z]
-        t = self.template_pair_stack(
-            template_embeds["pair"], 
-            pair_mask.unsqueeze(-3).to(dtype=z.dtype), 
-            chunk_size=chunk_size,
-            _mask_trans=_mask_trans,
-        )
-
         # [*, N, N, C_z]
         t = self.template_pointwise_att(
-            t, 
+            t.to(z.device), 
             z, 
             template_mask=batch["template_mask"].to(dtype=z.dtype),
-            chunk_size=chunk_size,
+            chunk_size=chunk_size * 256,
         )
+
         t = t * (torch.sum(batch["template_mask"]) > 0)
 
         ret = {}
         if self.config.embed_angles:
             ret["template_single_embedding"] = template_embeds["angle"]
 
-        ret.update({"template_pair_embedding": t})
+        z += t
 
-        return ret
+        return ret, z
 
 
 class TemplateAngleEmbedder(nn.Module):
