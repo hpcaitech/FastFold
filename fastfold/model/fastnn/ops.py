@@ -1,4 +1,3 @@
-from typing import Tuple
 # Copyright 2022 BioMap (Beijing) Intelligence Technology Limited
 # Copyright 2022 HPC-AI Technology Inc.
 #
@@ -16,7 +15,9 @@ from typing import Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 from einops import rearrange
+from typing import Tuple
 from fastfold.model.fastnn.kernel import mask_softmax, mask_bias_softmax
 from fastfold.model.fastnn.kernel import LayerNorm
 
@@ -33,6 +34,11 @@ CHUNK_SIZE = None
 def set_chunk_size(chunk_size):
     global CHUNK_SIZE
     CHUNK_SIZE = chunk_size
+
+
+def get_chunk_size():
+    global CHUNK_SIZE
+    return CHUNK_SIZE
 
 
 class DropoutRowwise(nn.Module):
@@ -590,6 +596,76 @@ class ChunkTriangleAttentionStartingNode(nn.Module):
         return output
 
 
+class ChunkMSARowAttentionWithPairBias(nn.Module):
+
+    def __init__(self, d_node, d_pair, c=32, n_head=8, p_drop=0.15):
+        super(ChunkMSARowAttentionWithPairBias, self).__init__()
+        self.d_node = d_node
+        self.d_pair = d_pair
+        self.c = c
+        self.n_head = n_head
+        self.p_drop = p_drop
+
+        self.layernormM = LayerNorm(d_node)
+        self.layernormZ = LayerNorm(d_pair)
+
+        _init_weights = torch.nn.init.normal_(torch.zeros([n_head, d_pair]),
+                                              std=1.0 / math.sqrt(d_pair))
+        self.linear_b_weights = nn.parameter.Parameter(data=_init_weights, requires_grad=True)
+
+        self.attention = SelfAttention(qkv_dim=d_node,
+                                       c=c,
+                                       n_head=n_head,
+                                       out_dim=d_node,
+                                       gating=True,
+                                       last_bias_fuse=True)
+
+        self.out_bias = nn.parameter.Parameter(data=torch.zeros((d_node,)), requires_grad=True)
+
+    def forward(self, M_raw, Z, M_mask):
+        
+        if CHUNK_SIZE == None:
+            ## Input projections
+            M = self.layernormM(M_raw)
+            Z = self.layernormZ(Z)
+            b = F.linear(Z, self.linear_b_weights)
+            b, work = gather_async(b, dim=1)
+            # b = rearrange(b, 'b q k h -> b h q k')
+            # padding_bias = (1e9 * (M_mask - 1.))[:, :, None, None, :]
+            M = self.attention(M, M_mask, (b, work))
+            dropout_mask = torch.ones_like(M[:, 0:1, :, :], device=M.device, dtype=M.dtype)
+            return bias_dropout_add(M, self.out_bias, dropout_mask, M_raw, prob=self.p_drop, training=self.training)
+
+        chunk_size = CHUNK_SIZE
+        para_dim_z = Z.shape[1]
+        para_dim_m = M_raw.shape[1]
+        # z is big, but b is small. So we compute z in chunk to get b, and recompute z in chunk later instead of storing it
+        b = torch.empty((Z.shape[0], Z.shape[1], Z.shape[2], self.n_head), device=Z.device, dtype=Z.dtype)
+        for i in range(0, para_dim_z, chunk_size):
+            z = self.layernormZ(Z[:, i:i + chunk_size, :, :])
+            b[:, i:i + chunk_size, :, :] = F.linear(z, self.linear_b_weights)
+        b, work = gather_async(b, dim=1)
+        b = gather_async_opp(b, work, dim=1)
+        b = rearrange(b, 'b q k h -> b h q k')
+        
+        output = torch.empty_like(M_raw)
+        dropout_mask = torch.ones_like(M_raw[:, 0:1, :, :], device=M_raw.device, dtype=M_raw.dtype)
+        for i in range(0, para_dim_m, chunk_size):
+            m_raw = M_raw[:, i:i + chunk_size, :, :]
+            m = self.layernormM(m_raw)
+            m_mask = M_mask[:, i:i + chunk_size, :]
+            
+            m = self.attention(m, m_mask, (b, -1))
+            m =  bias_dropout_add(m,
+                                    self.out_bias,
+                                    dropout_mask,
+                                    m_raw,
+                                    prob=self.p_drop,
+                                    training=self.training)
+            output[:, i:i + chunk_size, :, :] = m
+
+        return output
+
 class ChunkTriangleAttentionEndingNode(nn.Module):
 
     def __init__(self, d_pair, p_drop, c=32, n_head=4):
@@ -657,6 +733,38 @@ class ChunkTriangleAttentionEndingNode(nn.Module):
             output[:, :, i:i + chunk_size, :] = z
         
         return output
+
+
+class ChunkMSAColumnGlobalAttention(nn.Module):
+    def __init__(self, d_node, c=8, n_head=8):
+        super(ChunkMSAColumnGlobalAttention, self).__init__()
+
+        self.d_node = d_node
+        self.c = c
+        self.n_head = n_head
+
+        self.layernormM = LayerNorm(d_node)
+        self.global_attention = GlobalAttention(
+            qkv_dim=d_node, c=c, n_head=n_head, out_dim=d_node
+        )
+
+    def forward(self, M_raw, M_mask):
+        
+        para_dim = M_raw.shape[2]
+        if CHUNK_SIZE is None:
+            chunk_size = para_dim
+        else:
+            chunk_size = CHUNK_SIZE
+        
+        for i in range(0, para_dim, chunk_size):
+            m = M_raw[:, :, i:i + chunk_size, :].transpose(-2, -3)
+            m = self.layernormM(m)
+            m_mask = M_mask[:, :, i:i + chunk_size].transpose(-1, -2)
+            m = self.global_attention(m, m_mask)
+            m = m.transpose(-2, -3)
+            M_raw[:, :, i:i + chunk_size, :] += m
+        
+        return M_raw
 
 
 class RecyclingEmbedder(nn.Module):

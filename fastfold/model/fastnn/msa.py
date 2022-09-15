@@ -20,7 +20,7 @@ import torch.nn.functional as F
 # from fastfold.model.fastnn.kernel import LayerNorm
 from torch.nn import LayerNorm
 
-from fastfold.model.fastnn.ops import Transition, SelfAttention, GlobalAttention
+from fastfold.model.fastnn.ops import ChunkMSARowAttentionWithPairBias, ChunkTransition, SelfAttention, GlobalAttention, Transition, ChunkMSAColumnGlobalAttention
 from fastfold.model.fastnn.kernel import bias_dropout_add
 from fastfold.distributed import scatter, row_to_col
 from fastfold.distributed.comm_async import gather_async
@@ -151,12 +151,12 @@ class ExtraMSAStack(nn.Module):
     def __init__(self, d_node, d_pair, p_drop=0.15):
         super(ExtraMSAStack, self).__init__()
 
-        self.MSARowAttentionWithPairBias = MSARowAttentionWithPairBias(
+        self.MSARowAttentionWithPairBias = ChunkMSARowAttentionWithPairBias(
             d_node=d_node, d_pair=d_pair, p_drop=p_drop, c=8
         )
 
-        self.MSAColumnAttention = MSAColumnGlobalAttention(d_node=d_node, c=8)
-        self.MSATransition = Transition(d=d_node)
+        self.MSAColumnAttention = ChunkMSAColumnGlobalAttention(d_node=d_node, c=8)
+        self.MSATransition = ChunkTransition(d=d_node)
 
     def forward(self, node, pair, node_mask):
         node_mask_row = scatter(node_mask, dim=1)

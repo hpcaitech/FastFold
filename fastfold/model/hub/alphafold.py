@@ -204,7 +204,6 @@ class AlphaFold(nn.Module):
             if not self.globals.is_multimer
             else self.input_embedder(feats)
         )
-        print("embed %.4fG" % (torch.cuda.max_memory_allocated() / (1024 ** 3)))
 
         # Initialize the recycling embeddings, if needs be
         if None in [m_1_prev, z_prev, x_prev]:
@@ -253,8 +252,6 @@ class AlphaFold(nn.Module):
 
         # Possibly prevents memory fragmentation
         del m_1_prev, z_prev, x_prev
-        
-        print("cycle %.4fG" % (torch.cuda.max_memory_allocated() / (1024 ** 3)))
 
         # Embed the templates + merge with MSA/pair embeddings
         if self.config.template.enabled:
@@ -310,7 +307,6 @@ class AlphaFold(nn.Module):
                         dim=-2,
                     )
         del template_feats, template_embeds, torsion_angles_mask
-        print("temp %.4fG" % (torch.cuda.max_memory_allocated() / (1024 ** 3)))
 
         # Embed extra MSA features + merge with pairwise embeddings
         if self.config.extra_msa.enabled:
@@ -318,12 +314,11 @@ class AlphaFold(nn.Module):
                 extra_msa_fn = data_transforms_multimer.build_extra_msa_feat
             else:
                 extra_msa_fn = build_extra_msa_feat
-            print("msaex0 %.4fG" % (torch.cuda.max_memory_allocated() / (1024 ** 3)))
+
             # [*, S_e, N, C_e]
             extra_msa_feat = extra_msa_fn(feats)
-            print("msaex1 %.4fG" % (torch.cuda.max_memory_allocated() / (1024 ** 3)))
             extra_msa_feat = self.extra_msa_embedder(extra_msa_feat)
-            print("msaex2 %.4fG" % (torch.cuda.max_memory_allocated() / (1024 ** 3)))
+
             # [*, N, N, C_z]
             z = self.extra_msa_stack(
                 extra_msa_feat,
@@ -333,7 +328,7 @@ class AlphaFold(nn.Module):
                 pair_mask=pair_mask.to(dtype=z.dtype),
                 _mask_trans=self.config._mask_trans,
             )
-        print("msaex %.4fG" % (torch.cuda.max_memory_allocated() / (1024 ** 3)))
+        del extra_msa_feat, extra_msa_fn
 
         # Run MSA + pair embeddings through the trunk of the network
         # m: [*, S, N, C_m]
