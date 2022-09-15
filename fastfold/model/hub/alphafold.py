@@ -276,17 +276,16 @@ class AlphaFold(nn.Module):
                 feats["template_torsion_angles_mask"] = (
                     template_embeds["template_mask"]
                 )
+                # [*, N, N, C_z]
+                z += template_embeds["template_pair_embedding"]
             else:
-                template_embeds = self.template_embedder(
+                template_embeds, z = self.template_embedder(
                     template_feats,
                     z,
                     pair_mask.to(dtype=z.dtype),
                     no_batch_dims,
                     self.globals.chunk_size
                 )
-
-            # [*, N, N, C_z]
-            z += template_embeds["template_pair_embedding"]
 
             if(
                 self.config.template.embed_angles or 
@@ -310,6 +309,8 @@ class AlphaFold(nn.Module):
                         [feats["msa_mask"], template_embeds["template_mask"]],
                         dim=-2,
                     )
+        del template_feats, template_embeds, torsion_angles_mask
+        print("temp %.4fG" % (torch.cuda.max_memory_allocated() / (1024 ** 3)))
 
         # Embed extra MSA features + merge with pairwise embeddings
         if self.config.extra_msa.enabled:
@@ -317,11 +318,12 @@ class AlphaFold(nn.Module):
                 extra_msa_fn = data_transforms_multimer.build_extra_msa_feat
             else:
                 extra_msa_fn = build_extra_msa_feat
-            
+            print("msaex0 %.4fG" % (torch.cuda.max_memory_allocated() / (1024 ** 3)))
             # [*, S_e, N, C_e]
             extra_msa_feat = extra_msa_fn(feats)
+            print("msaex1 %.4fG" % (torch.cuda.max_memory_allocated() / (1024 ** 3)))
             extra_msa_feat = self.extra_msa_embedder(extra_msa_feat)
-
+            print("msaex2 %.4fG" % (torch.cuda.max_memory_allocated() / (1024 ** 3)))
             # [*, N, N, C_z]
             z = self.extra_msa_stack(
                 extra_msa_feat,

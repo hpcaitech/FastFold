@@ -114,7 +114,7 @@ def build_template_pair_feat(
     inf: float = 1e8,
     chunk=None
 ):  
-    if 1 <= chunk <= 4:
+    if chunk and 1 <= chunk <= 4:
         for k, v in batch.items():
             batch[k] = v.cpu()
 
@@ -168,6 +168,7 @@ def build_template_pair_feat(
 
     to_concat.extend(torch.unbind(unit_vector[..., None, :], dim=-1))
     to_concat.append(template_mask_2d[..., None])
+    del unit_vector, rigid_vec, inv_distance_scalar
 
     act = torch.cat(to_concat, dim=-1)
     act = act * template_mask_2d[..., None]
