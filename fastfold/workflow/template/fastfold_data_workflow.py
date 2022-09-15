@@ -161,15 +161,15 @@ class FastFoldDataWorkFlow:
             # Run HHBlits on BFD
             bfd_out_path = os.path.join(alignment_dir, "bfd_uniclust_hits.a3m")
             # generate workflow for STEP4
-            bdf_node = self.hhblits_bfd_factory.gen_node(fasta_path, bfd_out_path)
+            bfd_node = self.hhblits_bfd_factory.gen_node(fasta_path, bfd_out_path)
 
         else:
             # Run Jackhmmer on small_bfd
             bfd_out_path = os.path.join(alignment_dir, "bfd_uniclust_hits.a3m")
             # generate workflow for STEP4_2
-            bdf_node = self.jackhmmer_small_bfd_factory.gen_node(fasta_path, bfd_out_path)
+            bfd_node = self.jackhmmer_small_bfd_factory.gen_node(fasta_path, bfd_out_path)
 
         # run workflow
-        batch_run(workflow_id=workflow_id, dags=[hhs_node, mgnify_node, bdf_node]) 
+        batch_run(workflow_id=workflow_id, dags=[hhs_node, mgnify_node, bfd_node]) 
 
         return
