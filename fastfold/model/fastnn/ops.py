@@ -121,7 +121,6 @@ class OutProductMean(nn.Module):
     def forward(self, M, M_mask, Z_raw):
         M = self.layernormM(M)
         right_act = self.linear_b(M)
-
         right_act_all, work = gather_async(right_act, dim=2)
         # right_act_all = gather(right_act, dim=2)
 
@@ -129,10 +128,9 @@ class OutProductMean(nn.Module):
         M_mask = M_mask.unsqueeze(-1)
         M_mask_col = scatter(M_mask, dim=2)
         left_act = M_mask_col * left_act
-        norm = torch.einsum('bsid,bsjd->bijd', M_mask_col, M_mask)
+        norm = torch.einsum('bsid,bsjd->bijd', M_mask_col, M_mask) + 1e-3
 
         right_act_all = gather_async_opp(right_act_all, work, dim=2)
-
         right_act_all = M_mask * right_act_all
 
         para_dim = left_act.shape[2]
@@ -140,16 +138,15 @@ class OutProductMean(nn.Module):
         if CHUNK_SIZE == None:
             chunk_size = para_dim
 
-        Z = torch.empty_like(Z_raw)
         for ax in range(0, para_dim, chunk_size):
             left_act_part = left_act[:, :, ax:ax + chunk_size, :]
             O = torch.einsum('bsid,bsje->bijde', left_act_part, right_act_all)
             O = rearrange(O, 'b i j d e -> b i j (d e)')
             O = self.o_linear(O)
-            Z[:, ax:ax + chunk_size, :, :] = O
+            norm0 = norm[:, ax:ax + chunk_size, :, :]
+            Z_raw[:, ax:ax + chunk_size, :, :] += O / norm0
 
-        Z /= (1e-3 + norm)
-        return Z
+        return Z_raw
 
 
 class Linear(nn.Linear):
