@@ -168,7 +168,7 @@ class TemplateEmbedder(nn.Module):
         template_embeds = []
         n_templ = batch["template_aatype"].shape[templ_dim]
 
-        if 1 <= chunk_size <= 4:
+        if isinstance(chunk_size, int) and 1 <= chunk_size <= 4:
             t = torch.empty((n_templ, z.shape[0], z.shape[1], 64), dtype=z.dtype, device='cpu')
         else:
             t = torch.empty((n_templ, z.shape[0], z.shape[1], 64), dtype=z.dtype, device=z.device)
