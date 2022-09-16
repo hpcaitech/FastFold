@@ -224,7 +224,7 @@ class TemplateEmbedder(nn.Module):
             t.to(z.device), 
             z, 
             template_mask=batch["template_mask"].to(dtype=z.dtype),
-            chunk_size=chunk_size * 256,
+            chunk_size=chunk_size * 256 if chunk_size is not None else chunk_size,
         )
 
         t = t * (torch.sum(batch["template_mask"]) > 0)
