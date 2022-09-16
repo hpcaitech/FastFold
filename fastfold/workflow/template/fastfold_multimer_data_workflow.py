@@ -3,25 +3,30 @@ import time
 from multiprocessing import cpu_count
 import ray
 from ray import workflow
+from fastfold.data.tools import hhsearch, hmmsearch
 from fastfold.workflow.factory import JackHmmerFactory, HHSearchFactory, HHBlitsFactory
 from fastfold.workflow import batch_run
-from typing import Optional
+from typing import Optional, Union
 
-class FastFoldDataWorkFlow:
+TemplateSearcher = Union[hhsearch.HHSearch, hmmsearch.Hmmsearch]
+
+
+class FastFoldMultimerDataWorkFlow:
     def __init__(
         self,
         jackhmmer_binary_path: Optional[str] = None,
         hhblits_binary_path: Optional[str] = None,
-        hhsearch_binary_path: Optional[str] = None,
         uniref90_database_path: Optional[str] = None,
         mgnify_database_path: Optional[str] = None,
         bfd_database_path: Optional[str] = None,
         uniclust30_database_path: Optional[str] = None,
-        pdb70_database_path: Optional[str] = None,
+        uniprot_database_path: Optional[str] = None,
+        template_searcher: Optional[TemplateSearcher] = None,
         use_small_bfd: Optional[bool] = None,
         no_cpus: Optional[int] = None,
         uniref_max_hits: int = 10000,
         mgnify_max_hits: int = 5000,
+        uniprot_max_hits: int = 50000,
     ):
         db_map = {
             "jackhmmer": {
@@ -30,6 +35,7 @@ class FastFoldDataWorkFlow:
                     uniref90_database_path,
                     mgnify_database_path,
                     bfd_database_path if use_small_bfd else None,
+                    uniprot_database_path,
                 ],
             },
             "hhblits": {
@@ -38,13 +44,8 @@ class FastFoldDataWorkFlow:
                     bfd_database_path if not use_small_bfd else None,
                 ],
             },
-            "hhsearch": {
-                "binary": hhsearch_binary_path,
-                "dbs": [
-                    pdb70_database_path,
-                ],
-            },
         }
+
 
         for name, dic in db_map.items():
             binary, dbs = dic["binary"], dic["dbs"]
@@ -53,21 +54,13 @@ class FastFoldDataWorkFlow:
                     f"{name} DBs provided but {name} binary is None"
                 )
 
-        if(not all([x is None for x in db_map["hhsearch"]["dbs"]])
-            and uniref90_database_path is None):
-            raise ValueError(
-                """uniref90_database_path must be specified in order to perform
-                    template search"""
-            )
-
-        self.use_small_bfd = use_small_bfd
         self.uniref_max_hits = uniref_max_hits
         self.mgnify_max_hits = mgnify_max_hits
+        self.uniprot_max_hits = uniprot_max_hits
+        self.use_small_bfd = use_small_bfd
 
         if(no_cpus is None):
-            self.no_cpus = cpu_count()
-        else:
-            self.no_cpus = no_cpus
+            no_cpus = cpu_count()
 
         # create JackHmmer workflow generator
         self.jackhmmer_uniref90_factory = None
@@ -81,7 +74,7 @@ class FastFoldDataWorkFlow:
             self.jackhmmer_uniref90_factory = JackHmmerFactory(config = jh_config)
 
         # create HHSearch workflow generator
-        self.hhsearch_pdb_factory = None
+        self.hhmmsearch_pdb_factory = None
         if pdb70_database_path is not None:
             hhs_config = {
                 "binary_path": db_map["hhsearch"]["binary"],
@@ -117,14 +110,23 @@ class FastFoldDataWorkFlow:
                 }
                 self.jackhmmer_small_bfd_factory = JackHmmerFactory(config=jh_config)
 
+        self.jackhmmer_uniprot_factory = None
+        if jackhmmer_binary_path is not None and uniprot_database_path is not None:
+            jh_config = {
+                "binary_path": db_map["jackhmmer"]["binary"],
+                "database_path": uniprot_database_path,
+                "n_cpu": no_cpus,
+                "uniref_max_hits": uniprot_max_hits,
+            }
+            self.jackhmmer_uniprot_factory = JackHmmerFactory(config=jh_config)
+
 
     def run(self, fasta_path: str, output_dir: str, alignment_dir: str=None, storage_dir: str=None) -> None:
         storage_dir = "file:///tmp/ray/lcmql/workflow_data"
         if storage_dir is not None:
             if not os.path.exists(storage_dir):
                 os.makedirs(storage_dir)
-            if not ray.is_initialized():
-                ray.init(storage=storage_dir)
+            ray.init(storage=storage_dir)
 
         localtime = time.asctime(time.localtime(time.time()))
         workflow_id = 'fastfold_data_workflow ' + str(localtime)
