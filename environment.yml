@@ -16,6 +16,8 @@ dependencies:
       - typing-extensions==3.10.0.2
       - einops
       - colossalai
+      - ray==2.0.0
+      - pyarrow
       - pandas
       - --find-links https://download.pytorch.org/whl/cu113/torch_stable.html torch==1.11.1+cu113
       - --find-links https://download.pytorch.org/whl/cu113/torch_stable.html torchaudio==0.11.1+cu113

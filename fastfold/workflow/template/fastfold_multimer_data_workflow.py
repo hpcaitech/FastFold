@@ -3,12 +3,10 @@ import time
 from multiprocessing import cpu_count
 import ray
 from ray import workflow
-from fastfold.data.tools import hhsearch, hmmsearch
-from fastfold.workflow.factory import JackHmmerFactory, HHSearchFactory, HHBlitsFactory
+from fastfold.data.tools import hmmsearch
+from fastfold.workflow.factory import JackHmmerFactory, HHBlitsFactory, HmmSearchFactory
 from fastfold.workflow import batch_run
 from typing import Optional, Union
-
-TemplateSearcher = Union[hhsearch.HHSearch, hmmsearch.Hmmsearch]
 
 
 class FastFoldMultimerDataWorkFlow:
@@ -16,12 +14,14 @@ class FastFoldMultimerDataWorkFlow:
         self,
         jackhmmer_binary_path: Optional[str] = None,
         hhblits_binary_path: Optional[str] = None,
+        hmmsearch_binary_path: Optional[str] = None,
+        hmmbuild_binary_path: Optional[str] = None,
         uniref90_database_path: Optional[str] = None,
         mgnify_database_path: Optional[str] = None,
         bfd_database_path: Optional[str] = None,
         uniclust30_database_path: Optional[str] = None,
         uniprot_database_path: Optional[str] = None,
-        template_searcher: Optional[TemplateSearcher] = None,
+        pdb_seqres_database_path: Optional[str] = None,
         use_small_bfd: Optional[bool] = None,
         no_cpus: Optional[int] = None,
         uniref_max_hits: int = 10000,
@@ -44,6 +44,12 @@ class FastFoldMultimerDataWorkFlow:
                     bfd_database_path if not use_small_bfd else None,
                 ],
             },
+            "hmmsearch": {
+                "binary": hmmsearch_binary_path,
+                "dbs": [
+                    pdb_seqres_database_path,
+                ],
+            },
         }
 
 
@@ -54,13 +60,21 @@ class FastFoldMultimerDataWorkFlow:
                     f"{name} DBs provided but {name} binary is None"
                 )
 
+        if(not all([x is None for x in db_map["hmmsearch"]["dbs"]])
+            and uniref90_database_path is None):
+            raise ValueError(
+                """uniref90_database_path must be specified in order to perform
+                    template search"""
+            )
+
+        self.use_small_bfd = use_small_bfd
         self.uniref_max_hits = uniref_max_hits
         self.mgnify_max_hits = mgnify_max_hits
-        self.uniprot_max_hits = uniprot_max_hits
-        self.use_small_bfd = use_small_bfd
 
         if(no_cpus is None):
-            no_cpus = cpu_count()
+            self.no_cpus = cpu_count()
+        else:
+            self.no_cpus = no_cpus
 
         # create JackHmmer workflow generator
         self.jackhmmer_uniref90_factory = None
@@ -73,15 +87,16 @@ class FastFoldMultimerDataWorkFlow:
             }
             self.jackhmmer_uniref90_factory = JackHmmerFactory(config = jh_config)
 
-        # create HHSearch workflow generator
-        self.hhmmsearch_pdb_factory = None
-        if pdb70_database_path is not None:
-            hhs_config = {
-                "binary_path": db_map["hhsearch"]["binary"],
-                "databases": db_map["hhsearch"]["dbs"],
+        # create HMMSearch workflow generator
+        self.hmmsearch_pdb_factory = None
+        if pdb_seqres_database_path is not None:
+            hmm_config = {
+                "binary_path": db_map["hmmsearch"]["binary"],
+                "hmmbuild_binary_path": hmmbuild_binary_path,
+                "database_path": pdb_seqres_database_path,
                 "n_cpu": self.no_cpus,
             }
-            self.hhsearch_pdb_factory = HHSearchFactory(config=hhs_config)
+            self.hmmsearch_pdb_factory = HmmSearchFactory(config=hmm_config)
 
 
         self.jackhmmer_mgnify_factory = None
@@ -121,12 +136,13 @@ class FastFoldMultimerDataWorkFlow:
             self.jackhmmer_uniprot_factory = JackHmmerFactory(config=jh_config)
 
 
-    def run(self, fasta_path: str, output_dir: str, alignment_dir: str=None, storage_dir: str=None) -> None:
+    def run(self, fasta_path: str, alignment_dir: str=None, storage_dir: str=None) -> None:
         storage_dir = "file:///tmp/ray/lcmql/workflow_data"
         if storage_dir is not None:
             if not os.path.exists(storage_dir):
                 os.makedirs(storage_dir)
-            ray.init(storage=storage_dir)
+            if not ray.is_initialized():
+                ray.init(storage=storage_dir)
 
         localtime = time.asctime(time.localtime(time.time()))
         workflow_id = 'fastfold_data_workflow ' + str(localtime)
@@ -138,27 +154,19 @@ class FastFoldMultimerDataWorkFlow:
             print("Workflow not found. Clean. Skipping")
             pass
 
-        
-        # prepare alignment directory for alignment outputs
-        if alignment_dir is None:
-            alignment_dir = os.path.join(output_dir, "alignment")
-            if not os.path.exists(alignment_dir):
-                os.makedirs(alignment_dir)
-
         # Run JackHmmer on UNIREF90
-        uniref90_out_path = os.path.join(alignment_dir, "uniref90_hits.a3m")
+        uniref90_out_path = os.path.join(alignment_dir, "uniref90_hits.sto")
         # generate the workflow with i/o path
-        uniref90_node = self.jackhmmer_uniref90_factory.gen_node(fasta_path, uniref90_out_path)
+        uniref90_node = self.jackhmmer_uniref90_factory.gen_node(fasta_path, uniref90_out_path, output_format="sto")
 
-        #Run HHSearch on STEP1's result with PDB70"""
-        pdb70_out_path = os.path.join(alignment_dir, "pdb70_hits.hhr")
+        #Run HmmSearch on STEP1's result with PDB"""
         # generate the workflow (STEP2 depend on STEP1)
-        hhs_node = self.hhsearch_pdb_factory.gen_node(uniref90_out_path, pdb70_out_path, after=[uniref90_node])
+        hmm_node = self.hmmsearch_pdb_factory.gen_node(uniref90_out_path, output_dir=alignment_dir,after=[uniref90_node])
 
         # Run JackHmmer on MGNIFY
-        mgnify_out_path = os.path.join(alignment_dir, "mgnify_hits.a3m")
+        mgnify_out_path = os.path.join(alignment_dir, "mgnify_hits.sto")
         # generate workflow for STEP3
-        mgnify_node = self.jackhmmer_mgnify_factory.gen_node(fasta_path, mgnify_out_path)
+        mgnify_node = self.jackhmmer_mgnify_factory.gen_node(fasta_path, mgnify_out_path, output_format="sto")
 
         if not self.use_small_bfd:
             # Run HHBlits on BFD
@@ -168,11 +176,17 @@ class FastFoldMultimerDataWorkFlow:
 
         else:
             # Run Jackhmmer on small_bfd
-            bfd_out_path = os.path.join(alignment_dir, "bfd_uniclust_hits.a3m")
+            bfd_out_path = os.path.join(alignment_dir, "bfd_uniclust_hits.sto")
             # generate workflow for STEP4_2
-            bfd_node = self.jackhmmer_small_bfd_factory.gen_node(fasta_path, bfd_out_path)
+            bfd_node = self.jackhmmer_small_bfd_factory.gen_node(fasta_path, bfd_out_path, output_format="sto")
+
+        # Run JackHmmer on UNIPROT
+        uniprot_out_path = os.path.join(alignment_dir, "uniprot_hits.sto")
+        # generate workflow for STEP5
+        uniprot_node = self.jackhmmer_uniprot_factory.gen_node(fasta_path, uniprot_out_path,  output_format="sto")
+
 
         # run workflow
-        batch_run(workflow_id=workflow_id, dags=[hhs_node, mgnify_node, bfd_node]) 
+        batch_run(workflow_id=workflow_id, dags=[hmm_node, mgnify_node, bfd_node, uniprot_node]) 
 
         return

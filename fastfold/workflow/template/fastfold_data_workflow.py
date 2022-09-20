@@ -118,7 +118,7 @@ class FastFoldDataWorkFlow:
                 self.jackhmmer_small_bfd_factory = JackHmmerFactory(config=jh_config)
 
 
-    def run(self, fasta_path: str, output_dir: str, alignment_dir: str=None, storage_dir: str=None) -> None:
+    def run(self, fasta_path: str, alignment_dir: str=None, storage_dir: str=None) -> None:
         storage_dir = "file:///tmp/ray/lcmql/workflow_data"
         if storage_dir is not None:
             if not os.path.exists(storage_dir):
@@ -135,13 +135,6 @@ class FastFoldDataWorkFlow:
         except:
             print("Workflow not found. Clean. Skipping")
             pass
-
-        
-        # prepare alignment directory for alignment outputs
-        if alignment_dir is None:
-            alignment_dir = os.path.join(output_dir, "alignment")
-            if not os.path.exists(alignment_dir):
-                os.makedirs(alignment_dir)
 
         # Run JackHmmer on UNIREF90
         uniref90_out_path = os.path.join(alignment_dir, "uniref90_hits.a3m")
@@ -168,7 +161,7 @@ class FastFoldDataWorkFlow:
             # Run Jackhmmer on small_bfd
             bfd_out_path = os.path.join(alignment_dir, "bfd_uniclust_hits.a3m")
             # generate workflow for STEP4_2
-            bfd_node = self.jackhmmer_small_bfd_factory.gen_node(fasta_path, bfd_out_path)
+            bfd_node = self.jackhmmer_small_bfd_factory.gen_node(fasta_path, bfd_out_path, output_format="sto")
 
         # run workflow
         batch_run(workflow_id=workflow_id, dags=[hhs_node, mgnify_node, bfd_node]) 

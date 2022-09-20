@@ -5,15 +5,17 @@ import ray
 from ray.dag.function_node import FunctionNode
 
 from fastfold.data.tools import hmmsearch, hmmbuild
+from fastfold.data import parsers
 from fastfold.workflow.factory import TaskFactory
-from type import Optional
+from typing import Optional
+
 
 
 class HmmSearchFactory(TaskFactory):
 
     keywords = ['binary_path', 'hmmbuild_binary_path', 'database_path', 'n_cpu']
 
-    def gen_node(self, msa_sto: str, output_path: Optional[str] = None, after: List[FunctionNode]=None) -> FunctionNode:
+    def gen_node(self, msa_sto_path: str, output_dir: Optional[str] = None, after: List[FunctionNode]=None) -> FunctionNode:
 
         self.isReady()
 
@@ -28,16 +30,12 @@ class HmmSearchFactory(TaskFactory):
         @ray.remote
         def hmmsearch_node_func(after: List[FunctionNode]) -> None:
 
-            with open(a3m_path, "r") as f:
-                a3m = f.read()
-            if atab_path:
-                hhsearch_result, atab = runner.query(a3m, gen_atab=True)
-            else:
-                hhsearch_result = runner.query(a3m)
-            with open(output_path, "w") as f:
-                f.write(hhsearch_result)
-            if atab_path:
-                with open(atab_path, "w") as f:
-                    f.write(atab)
+            with open(msa_sto_path, "r") as f:
+                msa_sto = f.read()
+                msa_sto = parsers.deduplicate_stockholm_msa(msa_sto)
+                msa_sto = parsers.remove_empty_columns_from_stockholm_msa(
+                    msa_sto
+                )
+                hmmsearch_result = runner.query(msa_sto, output_dir=output_dir)
 
         return hmmsearch_node_func.bind(after)
