@@ -99,6 +99,63 @@ class EvoformerBlock(nn.Module):
 
         return m, z
 
+    def inplace(
+        self,
+        m: torch.Tensor,
+        z: torch.Tensor,
+        msa_mask: torch.Tensor,
+        pair_mask: torch.Tensor,
+        chunk_size: Optional[int] = None,
+        _mask_trans: bool = True,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+
+        dap_size = gpc.get_world_size(ParallelMode.TENSOR)
+
+        seq_length = pair_mask.size(-1)
+        padding_size = (int(seq_length / dap_size) + 1) * dap_size - seq_length
+
+        if self.first_block:
+            m[0] = m[0].unsqueeze(0)
+            z[0] = z[0].unsqueeze(0)
+
+            m[0] = torch.nn.functional.pad(m[0], (0, 0, 0, padding_size))
+            z[0] = torch.nn.functional.pad(z[0], (0, 0, 0, padding_size, 0, padding_size))
+
+            m[0] = scatter(m[0], dim=1)
+            z[0] = scatter(z[0], dim=1)
+
+        msa_mask = msa_mask.unsqueeze(0)
+        pair_mask = pair_mask.unsqueeze(0)
+
+        msa_mask = torch.nn.functional.pad(msa_mask, (0, padding_size))
+        pair_mask = torch.nn.functional.pad(pair_mask, (0, padding_size, 0, padding_size))
+
+        if not self.is_multimer:
+            m[0] = self.msa_stack(m[0], z[0], msa_mask)
+            z = self.communication.inplace(m[0], msa_mask, z)
+            m[0], work = All_to_All_Async.apply(m[0], 1, 2)
+            z = self.pair_stack.inplace(z, pair_mask)
+            m[0] = All_to_All_Async_Opp.apply(m[0], work, 1, 2)
+        else:
+            z = self.communication(m, msa_mask, z)
+            z_ori = z
+            m, work = All_to_All_Async.apply(m, 1, 2)
+            z = self.pair_stack(z, pair_mask)
+            m = All_to_All_Async_Opp.apply(m, work, 1, 2)
+            m = self.msa_stack(m, z_ori, msa_mask)
+
+        if self.last_block:
+            m[0] = m[0].squeeze(0)
+            z[0] = z[0].squeeze(0)
+
+            m[0] = gather(m[0], dim=0)
+            z[0] = gather(z[0], dim=0)
+
+            m[0] = m[0][:, :-padding_size, :]
+            z[0] = z[0][:-padding_size, :-padding_size, :]
+
+        return m, z
+
 
 class ExtraMSABlock(nn.Module):
     def __init__(
@@ -180,6 +237,74 @@ class ExtraMSABlock(nn.Module):
 
             m = m.squeeze(0)
             z = z.squeeze(0)
+
+        return m, z
+
+    def inplace(
+        self,
+        m: torch.Tensor,
+        z: torch.Tensor,
+        msa_mask: torch.Tensor,
+        pair_mask: torch.Tensor,
+        chunk_size: Optional[int] = None,
+        _mask_trans: bool = True,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+
+        dap_size = gpc.get_world_size(ParallelMode.TENSOR)
+
+        seq_cnt = msa_mask.size(-2)
+        seq_len = pair_mask.size(-1)
+        seq_cnt_padding_size = (int(seq_cnt / dap_size) + 1) * dap_size - seq_cnt
+        seq_len_padding_size = (int(seq_len / dap_size) + 1) * dap_size - seq_len
+
+        if self.first_block:
+            m[0] = m[0].unsqueeze(0)
+            z[0] = z[0].unsqueeze(0)
+
+            m[0] = torch.nn.functional.pad(
+                m[0], (0, 0, 0, seq_len_padding_size, 0, seq_cnt_padding_size)
+            )
+            z[0] = torch.nn.functional.pad(
+                z[0], (0, 0, 0, seq_len_padding_size, 0, seq_len_padding_size)
+            )
+
+            m[0] = scatter(m[0], dim=1) if not self.is_multimer else scatter(m[0], dim=2)
+            z[0] = scatter(z[0], dim=1)
+
+        msa_mask = msa_mask.unsqueeze(0)
+        pair_mask = pair_mask.unsqueeze(0)
+
+        msa_mask = torch.nn.functional.pad(
+            msa_mask, (0, seq_len_padding_size, 0, seq_cnt_padding_size)
+        )
+        pair_mask = torch.nn.functional.pad(
+            pair_mask, (0, seq_len_padding_size, 0, seq_len_padding_size)
+        )
+
+        if not self.is_multimer:
+            m = self.msa_stack.inplace(m, z, msa_mask)
+            z = self.communication.inplace(m[0], msa_mask, z)
+            m[0], work = All_to_All_Async.apply(m[0], 1, 2)
+            z = self.pair_stack.inplace(z, pair_mask)
+            m[0] = All_to_All_Async_Opp.apply(m[0], work, 1, 2)
+        else:
+            z = self.communication(m, msa_mask, z)
+            z_ori = z
+            m, work = All_to_All_Async.apply(m, 1, 2)
+            z = self.pair_stack(z, pair_mask)
+            m = All_to_All_Async_Opp.apply(m, work, 1, 2)
+            m = self.msa_stack(m, z_ori, msa_mask)
+
+        if self.last_block:
+
+            m[0] = gather(m[0], dim=1) if not self.is_multimer else gather(m[0], dim=2)
+            z[0] = gather(z[0], dim=1)
+
+            m[0] = m[0][:, :-seq_cnt_padding_size, :-seq_len_padding_size, :]
+            z[0] = z[0][:, :-seq_len_padding_size, :-seq_len_padding_size, :]
+
+            m[0] = m[0].squeeze(0)
+            z[0] = z[0].squeeze(0)
 
         return m, z
 
@@ -267,5 +392,51 @@ class TemplatePairStackBlock(nn.Module):
         if self.last_block:
             z = gather(z, dim=1)
             z = z[:, :-padding_size, :-padding_size, :]
+
+        return z
+    
+    def inplace(
+        self,
+        z: torch.Tensor,
+        mask: torch.Tensor,
+        chunk_size: Optional[int] = None,
+        _mask_trans: bool = True,
+    ):
+        z[0] = z[0].cpu()
+        dap_size = gpc.get_world_size(ParallelMode.TENSOR)
+
+        seq_length = mask.size(-1)
+        padding_size = (int(seq_length / dap_size) + 1) * dap_size - seq_length
+
+        if self.first_block:
+            z[0] = torch.nn.functional.pad(z[0], (0, 0, 0, padding_size, 0, padding_size))
+            z[0] = scatter(z[0], dim=1)
+
+        mask = torch.nn.functional.pad(mask, (0, padding_size, 0, padding_size))
+
+        # single_templates = [t.unsqueeze(-4) for t in torch.unbind(z, dim=-4)]
+        # single_templates_masks = [m.unsqueeze(-3) for m in torch.unbind(mask, dim=-3)]
+        for i in range(z[0].shape[0]):
+            single = z[0][i].unsqueeze(-4).to(mask.device)
+            single_mask = mask[i].unsqueeze(-3)
+
+            single_mask_row = scatter(single_mask, dim=1)
+            single_mask_col = scatter(single_mask, dim=2)
+
+            single = self.TriangleMultiplicationOutgoing(single, single_mask_row)
+            single = row_to_col(single)
+            single = self.TriangleMultiplicationIncoming(single, single_mask_col)
+            single = col_to_row(single)
+            single = self.TriangleAttentionStartingNode(single, single_mask_row)
+            single = row_to_col(single)
+            single = self.TriangleAttentionEndingNode(single, single_mask_col)
+            single = self.PairTransition(single)
+            single = col_to_row(single)
+            z[0][i] = single.to(z[0].device)
+
+        # z = torch.cat(single_templates, dim=-4)
+        if self.last_block:
+            z[0] = gather(z[0], dim=1)
+            z[0] = z[0][:, :-padding_size, :-padding_size, :]
 
         return z

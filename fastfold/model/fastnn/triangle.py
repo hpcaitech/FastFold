@@ -247,3 +247,21 @@ class PairStack(nn.Module):
         pair = self.PairTransition(pair)
         pair = col_to_row(pair)
         return pair
+
+    def inplace(self, pair, pair_mask):
+        pair_mask_row = scatter(pair_mask, dim=1)
+        pair_mask_col = scatter(pair_mask, dim=2)
+        
+        pair[0] = self.TriangleMultiplicationOutgoing(pair[0], pair_mask_row)
+        pair[0] = row_to_col(pair[0])
+        pair[0] = self.TriangleMultiplicationIncoming(pair[0], pair_mask_col)
+        pair[0] = col_to_row(pair[0])
+        
+        pair = self.TriangleAttentionStartingNode.inplace(pair, pair_mask_row)
+        pair[0] = row_to_col(pair[0])
+        pair = self.TriangleAttentionEndingNode.inplace(pair, pair_mask_col)
+        
+        pair = self.PairTransition.inplace(pair)
+        pair[0] = col_to_row(pair[0])
+
+        return pair
