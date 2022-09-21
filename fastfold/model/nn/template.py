@@ -411,5 +411,5 @@ class TemplatePairStack(nn.Module):
         if chunk_size is None:
             chunk_size = t[0].shape[0]
         for i in range(0, t[0].shape[0], chunk_size):
-            t[0][i:i + chunk_size] = self.layer_norm(t[0][i:i + chunk_size].to(mask.device)).to(t.device)
+            t[0][i:i + chunk_size] = self.layer_norm(t[0][i:i + chunk_size].to(mask.device)).to(t[0].device)
         return t
