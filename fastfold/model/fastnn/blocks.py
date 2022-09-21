@@ -402,7 +402,8 @@ class TemplatePairStackBlock(nn.Module):
         chunk_size: Optional[int] = None,
         _mask_trans: bool = True,
     ):
-        z[0] = z[0].cpu()
+        if isinstance(chunk_size, int) and 1 <= chunk_size <= 4:
+            z[0] = z[0].cpu()
         dap_size = gpc.get_world_size(ParallelMode.TENSOR)
 
         seq_length = mask.size(-1)
