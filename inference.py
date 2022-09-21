@@ -26,6 +26,7 @@ import numpy as np
 import torch
 import torch.multiprocessing as mp
 import pickle
+import shutil
 from fastfold.model.hub import AlphaFold
 
 import fastfold
@@ -35,7 +36,8 @@ from fastfold.config import model_config
 from fastfold.model.fastnn import set_chunk_size
 from fastfold.data import data_pipeline, feature_pipeline, templates
 from fastfold.data.tools import hhsearch, hmmsearch
-from fastfold.workflow.template import FastFoldDataWorkFlow
+from fastfold.workflow.template import FastFoldDataWorkFlow, FastFoldMultimerDataWorkFlow
+
 from fastfold.utils import inject_fastnn
 from fastfold.data.parsers import parse_fasta
 from fastfold.utils.import_weights import import_jax_weights_
@@ -150,15 +152,6 @@ def inference_multimer_model(args):
     
     predict_max_templates = 4
 
-    if not args.use_precomputed_alignments:
-        template_searcher = hmmsearch.Hmmsearch(
-            binary_path=args.hmmsearch_binary_path,
-            hmmbuild_binary_path=args.hmmbuild_binary_path,
-            database_path=args.pdb_seqres_database_path,
-        )
-    else:
-        template_searcher = None
-
     template_featurizer = templates.HmmsearchHitFeaturizer(
         mmcif_dir=args.template_mmcif_dir,
         max_template_date=args.max_template_date,
@@ -169,18 +162,37 @@ def inference_multimer_model(args):
     )
 
     if(not args.use_precomputed_alignments):
-        alignment_runner = data_pipeline.AlignmentRunnerMultimer(
-            jackhmmer_binary_path=args.jackhmmer_binary_path,
-            hhblits_binary_path=args.hhblits_binary_path,
-            uniref90_database_path=args.uniref90_database_path,
-            mgnify_database_path=args.mgnify_database_path,
-            bfd_database_path=args.bfd_database_path,
-            uniclust30_database_path=args.uniclust30_database_path,
-            uniprot_database_path=args.uniprot_database_path,
-            template_searcher=template_searcher,
-            use_small_bfd=(args.bfd_database_path is None),
-            no_cpus=args.cpus,
-        )
+            if args.enable_workflow:
+                print("Running alignment with ray workflow...")
+                alignment_runner = FastFoldMultimerDataWorkFlow(
+                    jackhmmer_binary_path=args.jackhmmer_binary_path,
+                    hhblits_binary_path=args.hhblits_binary_path,
+                    hmmsearch_binary_path=args.hmmsearch_binary_path,
+                    hmmbuild_binary_path=args.hmmbuild_binary_path,
+                    uniref90_database_path=args.uniref90_database_path,
+                    mgnify_database_path=args.mgnify_database_path,
+                    bfd_database_path=args.bfd_database_path,
+                    uniclust30_database_path=args.uniclust30_database_path,
+                    uniprot_database_path=args.uniprot_database_path,
+                    pdb_seqres_database_path=args.pdb_seqres_database_path,
+                    use_small_bfd=(args.bfd_database_path is None),
+                    no_cpus=args.cpus
+                )
+            else:
+                alignment_runner = data_pipeline.AlignmentRunnerMultimer(
+                    jackhmmer_binary_path=args.jackhmmer_binary_path,
+                    hhblits_binary_path=args.hhblits_binary_path,
+                    hmmsearch_binary_path=args.hmmsearch_binary_path,
+                    hmmbuild_binary_path=args.hmmbuild_binary_path,
+                    uniref90_database_path=args.uniref90_database_path,
+                    mgnify_database_path=args.mgnify_database_path,
+                    bfd_database_path=args.bfd_database_path,
+                    uniclust30_database_path=args.uniclust30_database_path,
+                    uniprot_database_path=args.uniprot_database_path,
+                    pdb_seqres_database_path=args.pdb_seqres_database_path,
+                    use_small_bfd=(args.bfd_database_path is None),
+                    no_cpus=args.cpus
+                )
     else:
         alignment_runner = None
 
@@ -226,12 +238,20 @@ def inference_multimer_model(args):
         if(args.use_precomputed_alignments is None):
             if not os.path.exists(local_alignment_dir):
                 os.makedirs(local_alignment_dir)
+            else:
+                shutil.rmtree(local_alignment_dir)
+                os.makedirs(local_alignment_dir)
             
             chain_fasta_str = f'>chain_{tag}\n{seq}\n'
             with temp_fasta_file(chain_fasta_str) as chain_fasta_path:
-                alignment_runner.run(
-                    chain_fasta_path, local_alignment_dir
-                )
+                if args.enable_workflow:
+                    print("Running alignment with ray workflow...")
+                    t = time.perf_counter()
+                    alignment_runner.run(chain_fasta_path, alignment_dir=local_alignment_dir)
+                    print(f"Alignment data workflow time: {time.perf_counter() - t}")
+                else:
+                    alignment_runner.run(chain_fasta_path, local_alignment_dir)
+                
                 print(f"Finished running alignment for {tag}")
                 
     local_alignment_dir = alignment_dir
@@ -356,7 +376,7 @@ def inference_monomer_model(args):
                     no_cpus=args.cpus,
                 )
                 t = time.perf_counter()
-                alignment_data_workflow_runner.run(fasta_path, output_dir=output_dir_base, alignment_dir=local_alignment_dir)
+                alignment_data_workflow_runner.run(fasta_path, alignment_dir=local_alignment_dir)
                 print(f"Alignment data workflow time: {time.perf_counter() - t}")
             else:
                 alignment_runner = data_pipeline.AlignmentRunner(

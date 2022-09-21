@@ -42,7 +42,6 @@ from fastfold.common import residue_constants, protein
 
 
 FeatureDict = Mapping[str, np.ndarray]
-TemplateSearcher = Union[hhsearch.HHSearch, hmmsearch.Hmmsearch]
 
 
 def empty_template_feats(n_res) -> FeatureDict:
@@ -466,12 +465,14 @@ class AlignmentRunnerMultimer:
         self,
         jackhmmer_binary_path: Optional[str] = None,
         hhblits_binary_path: Optional[str] = None,
+        hmmsearch_binary_path: Optional[str] = None,
+        hmmbuild_binary_path: Optional[str] = None,
         uniref90_database_path: Optional[str] = None,
         mgnify_database_path: Optional[str] = None,
         bfd_database_path: Optional[str] = None,
         uniclust30_database_path: Optional[str] = None,
         uniprot_database_path: Optional[str] = None,
-        template_searcher: Optional[TemplateSearcher] = None,
+        pdb_seqres_database_path: Optional[str] = None,
         use_small_bfd: Optional[bool] = None,
         no_cpus: Optional[int] = None,
         uniref_max_hits: int = 10000,
@@ -522,6 +523,12 @@ class AlignmentRunnerMultimer:
                 "binary": hhblits_binary_path,
                 "dbs": [
                     bfd_database_path if not use_small_bfd else None,
+                ],
+            },
+            "hmmsearch": {
+                "binary": hmmsearch_binary_path,
+                "dbs": [
+                    pdb_seqres_database_path,
                 ],
             },
         }
@@ -585,14 +592,13 @@ class AlignmentRunnerMultimer:
                 database_path=uniprot_database_path
             )
 
-        if(template_searcher is not None and 
-           self.jackhmmer_uniref90_runner is None
-        ):
-            raise ValueError(
-                "Uniref90 runner must be specified to run template search"
+        self.hmmsearch_pdb_runner = None
+        if(pdb_seqres_database_path is not None):
+            self.hmmsearch_pdb_runner = hmmsearch.Hmmsearch(
+                binary_path=hmmsearch_binary_path,
+                hmmbuild_binary_path=hmmbuild_binary_path,
+                database_path=pdb_seqres_database_path,
             )
-
-        self.template_searcher = template_searcher
     
     def run(
         self,
@@ -617,25 +623,11 @@ class AlignmentRunnerMultimer:
                 template_msa
             )
 
-            if(self.template_searcher is not None):
-                if(self.template_searcher.input_format == "sto"):
-                    pdb_templates_result = self.template_searcher.query(
-                        template_msa,
-                        output_dir=output_dir
-                    )
-                elif(self.template_searcher.input_format == "a3m"):
-                    uniref90_msa_as_a3m = parsers.convert_stockholm_to_a3m(
-                        template_msa
-                    )
-                    pdb_templates_result = self.template_searcher.query(
-                        uniref90_msa_as_a3m,
-                        output_dir=output_dir
-                    )
-                else:
-                    fmt = self.template_searcher.input_format
-                    raise ValueError(
-                        f"Unrecognized template input format: {fmt}"
-                    )
+        if(self.hmmsearch_pdb_runner is not None):
+            pdb_templates_result = self.hmmsearch_pdb_runner.query(
+                template_msa,
+                output_dir=output_dir
+            )
 
         if(self.jackhmmer_mgnify_runner is not None):
             mgnify_out_path = os.path.join(output_dir, "mgnify_hits.sto")
@@ -835,7 +827,6 @@ class DataPipeline:
             for f in os.listdir(alignment_dir):
                 path = os.path.join(alignment_dir, f)
                 filename, ext = os.path.splitext(f)
-
                 if(ext == ".a3m"):
                     with open(path, "r") as fp:
                         msa = parsers.parse_a3m(fp.read())

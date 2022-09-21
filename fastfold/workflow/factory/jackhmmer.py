@@ -13,7 +13,7 @@ class JackHmmerFactory(TaskFactory):
 
     keywords = ['binary_path', 'database_path', 'n_cpu', 'uniref_max_hits']
 
-    def gen_node(self, fasta_path: str, output_path: str, after: List[FunctionNode]=None) -> FunctionNode:
+    def gen_node(self, fasta_path: str, output_path: str, after: List[FunctionNode]=None, output_format: str="a3m") -> FunctionNode:
 
         self.isReady()
 
@@ -28,11 +28,17 @@ class JackHmmerFactory(TaskFactory):
         @ray.remote
         def jackhmmer_node_func(after: List[FunctionNode]) -> None:
             result = runner.query(fasta_path)[0]
-            uniref90_msa_a3m = parsers.convert_stockholm_to_a3m(
-                result['sto'],
-                max_sequences=self.config['uniref_max_hits']
-            )
-            with open(output_path, "w") as f:
-                f.write(uniref90_msa_a3m)
-        
+            if output_format == "a3m":
+                uniref90_msa_a3m = parsers.convert_stockholm_to_a3m(
+                    result['sto'],
+                    max_sequences=self.config['uniref_max_hits']
+                )
+                with open(output_path, "w") as f:
+                    f.write(uniref90_msa_a3m)
+            elif output_format == "sto":
+                template_msa = result['sto']
+                with open(output_path, "w") as f:
+                    f.write(template_msa)
+
+            
         return jackhmmer_node_func.bind(after)
