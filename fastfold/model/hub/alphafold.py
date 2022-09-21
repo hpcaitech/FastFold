@@ -321,7 +321,7 @@ class AlphaFold(nn.Module):
             extra_msa_feat = self.extra_msa_embedder(extra_msa_feat)
 
             # [*, N, N, C_z]
-            if not self.globals.inplace:
+            if not self.globals.inplace or self.globals.is_multimer:
                 z = self.extra_msa_stack(
                     extra_msa_feat,
                     z,
@@ -347,7 +347,7 @@ class AlphaFold(nn.Module):
         # m: [*, S, N, C_m]
         # z: [*, N, N, C_z]
         # s: [*, N, C_s]
-        if not self.globals.inplace:
+        if not self.globals.inplace or self.globals.is_multimer:
             m, z, s = self.evoformer(
                 m,
                 z,
