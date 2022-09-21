@@ -15,15 +15,18 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 from einops import rearrange
+from typing import Tuple
 from fastfold.model.fastnn.kernel import mask_softmax, mask_bias_softmax
 from fastfold.model.fastnn.kernel import LayerNorm
 
 from .initializer import glorot_uniform_af
 
-from fastfold.model.fastnn.kernel import bias_sigmod_ele
+from fastfold.model.fastnn.kernel import bias_sigmod_ele, bias_ele_dropout_residual, bias_dropout_add
 from fastfold.distributed import gather, scatter
-from fastfold.distributed.comm_async import gather_async, gather_async_opp
+from fastfold.distributed.comm_async import gather_async, gather_async_opp, get_world_size, get_rank, broadcast_sync, broadcast_async, broadcast_async_opp
+
 
 CHUNK_SIZE = None
 
@@ -31,6 +34,11 @@ CHUNK_SIZE = None
 def set_chunk_size(chunk_size):
     global CHUNK_SIZE
     CHUNK_SIZE = chunk_size
+
+
+def get_chunk_size():
+    global CHUNK_SIZE
+    return CHUNK_SIZE
 
 
 class DropoutRowwise(nn.Module):
@@ -73,6 +81,29 @@ class Transition(nn.Module):
         return src + x
 
 
+class ChunkTransition(nn.Module):
+
+    def __init__(self, d, n=4):
+        super(ChunkTransition, self).__init__()
+        self.norm = LayerNorm(d)
+        self.linear1 = Linear(d, n * d, initializer='relu')
+        self.linear2 = Linear(n * d, d, initializer='zeros')
+
+    def forward(self, src):
+        para_dim = src.shape[1]
+        chunk_size = 48
+        if CHUNK_SIZE == None:
+            chunk_size = para_dim
+
+        out = torch.empty_like(src)
+        for ax in range(0, para_dim, chunk_size):
+            x = self.norm(src[:, ax:ax + chunk_size, :, :])
+            x = self.linear2(F.relu(self.linear1(x)))
+            out[:, ax:ax + chunk_size, :, :] = x
+        out.add_(src)
+        return out
+
+
 class OutProductMean(nn.Module):
 
     def __init__(self, n_feat=64, n_feat_out=128, n_feat_proj=32):
@@ -87,10 +118,9 @@ class OutProductMean(nn.Module):
                                initializer='zero',
                                use_bias=True)
 
-    def forward(self, M, M_mask):
+    def forward(self, M, M_mask, Z_raw):
         M = self.layernormM(M)
         right_act = self.linear_b(M)
-
         right_act_all, work = gather_async(right_act, dim=2)
         # right_act_all = gather(right_act, dim=2)
 
@@ -98,10 +128,9 @@ class OutProductMean(nn.Module):
         M_mask = M_mask.unsqueeze(-1)
         M_mask_col = scatter(M_mask, dim=2)
         left_act = M_mask_col * left_act
-        norm = torch.einsum('bsid,bsjd->bijd', M_mask_col, M_mask)
+        norm = torch.einsum('bsid,bsjd->bijd', M_mask_col, M_mask) + 1e-3
 
         right_act_all = gather_async_opp(right_act_all, work, dim=2)
-
         right_act_all = M_mask * right_act_all
 
         para_dim = left_act.shape[2]
@@ -109,21 +138,15 @@ class OutProductMean(nn.Module):
         if CHUNK_SIZE == None:
             chunk_size = para_dim
 
-        out = []
         for ax in range(0, para_dim, chunk_size):
             left_act_part = left_act[:, :, ax:ax + chunk_size, :]
-
             O = torch.einsum('bsid,bsje->bijde', left_act_part, right_act_all)
-
             O = rearrange(O, 'b i j d e -> b i j (d e)')
+            O = self.o_linear(O)
+            norm0 = norm[:, ax:ax + chunk_size, :, :]
+            Z_raw[:, ax:ax + chunk_size, :, :] += O / norm0
 
-            out.append(self.o_linear(O))
-
-        Z = torch.cat(out, dim=1)
-
-        Z /= (1e-3 + norm)
-
-        return Z
+        return Z_raw
 
 
 class Linear(nn.Linear):
@@ -199,9 +222,12 @@ class SelfAttention(nn.Module):
             chunk_size = para_dim
 
         if nonbatched_bias is not None:
-            # logits += nonbatched_bias.unsqueeze(1)
-            bias = gather_async_opp(*nonbatched_bias, dim=1)
-            bias = rearrange(bias, 'b q k h -> b h q k')
+            if nonbatched_bias[-1] == -1:
+                bias = nonbatched_bias[0]
+            else:
+                # logits += nonbatched_bias.unsqueeze(1)
+                bias = gather_async_opp(*nonbatched_bias, dim=1)
+                bias = rearrange(bias, 'b q k h -> b h q k')
 
         output = []
         for ax in range(0, para_dim, chunk_size):
@@ -233,6 +259,611 @@ class SelfAttention(nn.Module):
         output = torch.cat(output, dim=1)
         
         return output
+
+
+def permute_final_dims(tensor, inds):
+    zero_index = -1 * len(inds)
+    first_inds = list(range(len(tensor.shape[:zero_index])))
+    return tensor.permute(first_inds + [zero_index + i for i in inds])
+
+
+class AsyncChunkTriangleMultiplicationOutgoing(nn.Module):
+
+    def __init__(self, d_pair, p_drop, c=128):
+        super(AsyncChunkTriangleMultiplicationOutgoing, self).__init__()
+        self.d_pair = d_pair
+        self.c = c
+
+        self.layernorm1 = LayerNorm(d_pair)
+        self.left_right_projection = Linear(d_pair, 2 * c)
+        self.left_right_gate = Linear(d_pair, 2 * c, initializer='zeros', bias_init=1.)
+
+        self.output_gate = Linear(d_pair, d_pair, initializer='zeros', bias_init=1.)
+        self.layernorm2 = LayerNorm(c)
+        self.output_projection = Linear(d_pair, d_pair, initializer='zeros', use_bias=False)
+        self.output_bias = nn.parameter.Parameter(data=torch.zeros((d_pair,)), requires_grad=True)
+
+        self.p_drop = p_drop
+
+    def forward(self, Z_raw, Z_mask_row):
+
+        if CHUNK_SIZE == None:
+            Z = self.layernorm1(Z_raw)
+            left_right_proj_act = self.left_right_projection(Z)
+            left_right_proj_act = Z_mask_row.unsqueeze(-1) * left_right_proj_act
+            left_right_proj_act *= torch.sigmoid(self.left_right_gate(Z))
+            left_proj_act, right_proj_act = left_right_proj_act.chunk(2, dim=-1)
+            right_proj_act, work = gather_async(right_proj_act.contiguous(), dim=1)
+            g = torch.sigmoid(self.output_gate(Z))
+            left_proj_act = permute_final_dims(left_proj_act, (2, 0, 1))
+            right_proj_act = gather_async_opp(right_proj_act, work, dim=1)
+            p = torch.matmul(left_proj_act, permute_final_dims(right_proj_act, (2, 1, 0)),)
+            ab = permute_final_dims(p, (1, 2, 0))
+            ab = self.output_projection(self.layernorm2(ab))
+            dropout_mask = torch.ones_like(Z[:, 0:1, :, :], device=Z.device, dtype=Z.dtype)
+            return bias_ele_dropout_residual(ab,
+                                             self.output_bias,
+                                             g,
+                                             dropout_mask,
+                                             Z_raw,
+                                             prob=self.p_drop,
+                                             training=self.training)
+
+        para_dim = Z_raw.shape[1]
+        chunk_size = CHUNK_SIZE * 32
+        world_size = get_world_size()
+        rank = get_rank()
+        output = torch.empty_like(Z_raw)
+        
+        for i in range(0, para_dim, chunk_size):
+            zi = Z_raw[:, i:i + chunk_size, :, :]
+            zi = self.layernorm1(zi)
+            gi = torch.sigmoid(self.left_right_gate(zi))
+            i_left_right_proj_act = self.left_right_projection(zi)
+            i_left_right_proj_act = Z_mask_row[:, i:i + chunk_size, :].unsqueeze(-1) * i_left_right_proj_act
+            i_left_right_proj_act *= gi
+            left_proj_act, _ = i_left_right_proj_act.chunk(2, dim=-1)
+            left_proj_act = permute_final_dims(left_proj_act, (2, 0, 1))
+            
+            for j in range(0, para_dim, chunk_size):
+                
+                zj = Z_raw[:, j:j + chunk_size, :, :]
+                zj = self.layernorm1(zj)
+                gj = torch.sigmoid(self.left_right_gate(zj))
+                j_left_right_proj_act = self.left_right_projection(zj)
+                j_left_right_proj_act = Z_mask_row[:, j:j + chunk_size, :].unsqueeze(-1) * j_left_right_proj_act
+                j_left_right_proj_act *= gj
+                _, right_proj_act = j_left_right_proj_act.chunk(2, dim=-1)
+                right_proj_act = right_proj_act.contiguous()
+                
+                work = None
+                right_proj_act_tmp = torch.empty_like(right_proj_act)
+                
+                for k in range(0, world_size):
+                    
+                    if world_size > 1:
+                        if work:
+                            broadcast_async_opp(work) # collect last broadcast
+                            if k != rank:
+                                right_proj_act_rec = right_proj_act_tmp.clone()
+                        else:  # init first broadcast
+                            if k == rank:
+                                broadcast_sync(k, right_proj_act, host=True)
+                            else:
+                                right_proj_act_tmp = broadcast_sync(k, right_proj_act, host=False)
+                                right_proj_act_rec = right_proj_act_tmp.clone()
+                    
+                        if k + 1 != world_size: # launch next broadcast
+                            if k + 1 == rank:
+                                work = broadcast_async(k + 1, right_proj_act, host=True)
+                            else:
+                                work = broadcast_async(k + 1, right_proj_act_tmp, host=False)
+                        
+                    if k == rank: # broadcast self right_proj_act
+                        p = torch.matmul(
+                            left_proj_act,
+                            permute_final_dims(right_proj_act, (2, 1, 0)),
+                        )
+                        p = permute_final_dims(p, (1, 2, 0))
+                        j_global = para_dim * k + j
+                        output[:, i:i + chunk_size, j_global:min(j_global + chunk_size, para_dim * (k + 1)), :] = p
+                        
+                    else:   # receive others broadcast                        
+                        p = torch.matmul(
+                            left_proj_act,
+                            permute_final_dims(right_proj_act_rec, (2, 1, 0)),
+                        )
+                        p = permute_final_dims(p, (1, 2, 0))
+                        j_global = para_dim * k + j
+                        output[:, i:i + chunk_size, j_global:min(j_global + chunk_size, para_dim * (k + 1)), :] = p
+        
+        dropout_mask = torch.ones_like(Z_raw[:, 0:1, :, :], device=Z_raw.device, dtype=Z_raw.dtype)                        
+        for i in range(0, Z_raw.shape[1], chunk_size):
+            z_raw = Z_raw[:, i:i + chunk_size, :, :]
+            g = torch.sigmoid(self.output_gate(self.layernorm1(z_raw)))
+            z = output[:, i:i + chunk_size, :, :]
+            z = self.output_projection(self.layernorm2(z))
+            z = bias_ele_dropout_residual(z,
+                                    self.output_bias,
+                                    g,
+                                    dropout_mask,
+                                    z_raw,
+                                    prob=self.p_drop,
+                                    training=self.training)
+            output[:, i:i + chunk_size, :, :] = z
+        return output
+
+
+class AsyncChunkTriangleMultiplicationIncoming(nn.Module):
+
+    def __init__(self, d_pair, p_drop, c=128):
+        super(AsyncChunkTriangleMultiplicationIncoming, self).__init__()
+        self.d_pair = d_pair
+        self.c = c
+
+        self.layernorm1 = LayerNorm(d_pair)
+        self.left_right_projection = Linear(d_pair, 2 * c)
+        self.left_right_gate = Linear(d_pair, 2 * c, initializer='zeros', bias_init=1.)
+
+        self.output_gate = Linear(d_pair, d_pair, initializer='zeros', bias_init=1.)
+        self.layernorm2 = LayerNorm(c)
+        self.output_projection = Linear(d_pair, d_pair, initializer='zeros', use_bias=False)
+        self.output_bias = nn.parameter.Parameter(data=torch.zeros((d_pair,)), requires_grad=True)
+
+        self.p_drop = p_drop
+
+    def forward(self, Z_raw, Z_mask_col):
+
+        if CHUNK_SIZE == None:
+            Z = self.layernorm1(Z_raw)
+            left_right_proj_act = self.left_right_projection(Z)
+            left_right_proj_act = Z_mask_col.unsqueeze(-1) * left_right_proj_act
+            left_right_proj_act *= torch.sigmoid(self.left_right_gate(Z))
+            left_proj_act, right_proj_act = left_right_proj_act.chunk(2, dim=-1)
+            left_proj_act, work = gather_async(left_proj_act.contiguous(), dim=2)
+            g = torch.sigmoid(self.output_gate(Z))
+            right_proj_act = permute_final_dims(right_proj_act, (2, 0, 1))
+            left_proj_act = gather_async_opp(left_proj_act, work, dim=2)
+            p = torch.matmul(permute_final_dims(left_proj_act, (2, 1, 0)), right_proj_act)
+            ab = permute_final_dims(p, (1, 2, 0))
+            ab = self.output_projection(self.layernorm2(ab))
+            dropout_mask = torch.ones_like(Z[:, 0:1, :, :], device=Z.device, dtype=Z.dtype)
+            return bias_ele_dropout_residual(ab,
+                                            self.output_bias,
+                                            g,
+                                            dropout_mask,
+                                            Z_raw,
+                                            prob=self.p_drop,
+                                            training=self.training)
+                    
+        para_dim = Z_raw.shape[2]
+        chunk_size = CHUNK_SIZE * 32
+        world_size = get_world_size()
+        rank = get_rank()
+        output = torch.empty_like(Z_raw)
+        
+        for i in range(0, para_dim, chunk_size):
+            zi = Z_raw[:, :, i:i + chunk_size, :]
+            zi = self.layernorm1(zi)
+            gi = torch.sigmoid(self.left_right_gate(zi))
+            i_left_right_proj_act = self.left_right_projection(zi)
+            i_left_right_proj_act = Z_mask_col[:, :, i:i + chunk_size].unsqueeze(-1) * i_left_right_proj_act
+            i_left_right_proj_act *= gi
+            _, right_proj_act = i_left_right_proj_act.chunk(2, dim=-1)
+            right_proj_act = permute_final_dims(right_proj_act, (2, 0, 1))
+            
+            for j in range(0, para_dim, chunk_size):
+                                
+                zj = Z_raw[:, :, j:j + chunk_size, :]
+                zj = self.layernorm1(zj)
+                gj = torch.sigmoid(self.left_right_gate(zj))
+                j_left_right_proj_act = self.left_right_projection(zj)
+                j_left_right_proj_act = Z_mask_col[:, :, j:j + chunk_size].unsqueeze(-1) * j_left_right_proj_act
+                j_left_right_proj_act *= gj
+                left_proj_act, _ = j_left_right_proj_act.chunk(2, dim=-1)
+                left_proj_act = left_proj_act.contiguous()
+                
+                work = None
+                left_proj_act_tmp = torch.empty_like(left_proj_act)
+                
+                for k in range(0, world_size):
+                    
+                    if world_size > 1:
+                        if work:
+                            broadcast_async_opp(work) # collect last broadcast
+                            if k != rank:
+                                left_proj_act_rec = left_proj_act_tmp.clone()
+                        else:  # init first broadcast
+                            if k == rank:
+                                broadcast_sync(k, left_proj_act, host=True)
+                            else:
+                                left_proj_act_tmp = broadcast_sync(k, left_proj_act, host=False)
+                                left_proj_act_rec = left_proj_act_tmp.clone()
+                        
+                        if k + 1 != world_size: # launch next broadcast
+                            if k + 1 == rank:
+                                work = broadcast_async(k + 1, left_proj_act, host=True)
+                            else:
+                                work = broadcast_async(k + 1, left_proj_act_tmp, host=False)
+                    
+                    if k == rank: # broadcast self proj_act
+                        # left: [seq,chunkj,dim] => [dim,chunkj,seq]
+                        # right: [seq,chunki,dim] => [dim,seq,chunki]
+                        # p: [dim,chunkj,chunki] => [chunkj,chunki,dim]
+                        p = torch.matmul(
+                            permute_final_dims(left_proj_act, (2, 1, 0)),
+                            right_proj_act
+                        )
+                        p = permute_final_dims(p, (1, 2, 0))
+                        j_global = para_dim * k + j
+                        output[:, j_global:min(j_global + chunk_size, para_dim * (k + 1)), i:i + chunk_size, :] = p
+                        
+                    else:   # receive others broadcast                        
+                        p = torch.matmul(
+                            permute_final_dims(left_proj_act_rec, (2, 1, 0)),
+                            right_proj_act
+                        )
+                        p = permute_final_dims(p, (1, 2, 0))
+                        j_global = para_dim * k + j
+                        output[:, j_global:min(j_global + chunk_size, para_dim * (k + 1)), i:i + chunk_size, :] = p
+        
+        dropout_mask = torch.ones_like(Z_raw[:, 0:1, :, :], device=Z_raw.device, dtype=Z_raw.dtype)
+        for i in range(0, Z_raw.shape[1], chunk_size):
+            z_raw = Z_raw[:, i:i + chunk_size, :, :]
+            g = torch.sigmoid(self.output_gate(self.layernorm1(z_raw)))
+            z = output[:, i:i + chunk_size, :, :]
+            z = self.output_projection(self.layernorm2(z))
+            z = bias_ele_dropout_residual(z,
+                                    self.output_bias,
+                                    g,
+                                    dropout_mask,
+                                    z_raw,
+                                    prob=self.p_drop,
+                                    training=self.training)
+            output[:, i:i + chunk_size, :, :] = z
+        return output
+
+
+class ChunkTriangleAttentionStartingNode(nn.Module):
+
+    def __init__(self, d_pair, p_drop, c=32, n_head=4):
+        super(ChunkTriangleAttentionStartingNode, self).__init__()
+        self.d_pair = d_pair
+        self.c = c
+        self.n_head = n_head
+        self.p_drop = p_drop
+
+        self.layernorm1 = LayerNorm(d_pair)
+        # _init_weights = torch.nn.init.normal_(torch.zeros([d_pair, n_head]),
+        #                                       std=1.0 / math.sqrt(d_pair))
+        # self.linear_b_weights = nn.parameter.Parameter(data=_init_weights)
+
+        self.linear_b = Linear(d_pair, n_head, initializer='linear', use_bias=False)
+        self.attention = SelfAttention(qkv_dim=d_pair,
+                                       c=c,
+                                       n_head=n_head,
+                                       out_dim=d_pair,
+                                       gating=True,
+                                       last_bias_fuse=True)
+
+        self.out_bias = nn.parameter.Parameter(data=torch.zeros((d_pair,)), requires_grad=True)
+
+    def forward(self, Z_raw, Z_mask):
+        
+        if CHUNK_SIZE == None:        
+            Z = self.layernorm1(Z_raw)
+            b = self.linear_b(Z)
+            b, work = gather_async(b, dim=1)
+            Z = self.attention(Z, Z_mask, (b, work))
+            dropout_mask = torch.ones_like(Z[:, 0:1, :, :], device=Z.device, dtype=Z.dtype)
+            return bias_dropout_add(Z,
+                                    self.out_bias,
+                                    dropout_mask,
+                                    Z_raw,
+                                    prob=self.p_drop,
+                                    training=self.training)
+        
+        chunk_size = CHUNK_SIZE
+        para_dim = Z_raw.shape[1]
+        # z is big, but b is small. So we compute z in chunk to get b, and recompute z in chunk later instead of storing it
+        b = torch.empty((Z_raw.shape[0], Z_raw.shape[1], Z_raw.shape[2], self.n_head), device=Z_raw.device, dtype=Z_raw.dtype)
+        for i in range(0, para_dim, chunk_size):
+            z = self.layernorm1(Z_raw[:, i:i + chunk_size, :, :])
+            b[:, i:i + chunk_size, :, :] = self.linear_b(z)
+        b, work = gather_async(b, dim=1)
+        b = gather_async_opp(b, work, dim=1)
+        b = rearrange(b, 'b q k h -> b h q k')
+        
+        output = torch.empty_like(Z_raw)
+        dropout_mask = torch.ones_like(z[:, 0:1, :, :], device=z.device, dtype=z.dtype)
+        for i in range(0, para_dim, chunk_size):
+            z_raw = Z_raw[:, i:i + chunk_size, :, :]
+            z = self.layernorm1(z_raw)
+            z_mask = Z_mask[:, i:i + chunk_size, :]
+            
+            z = self.attention(z, z_mask, (b, -1))
+            z =  bias_dropout_add(z,
+                                    self.out_bias,
+                                    dropout_mask,
+                                    z_raw,
+                                    prob=self.p_drop,
+                                    training=self.training)
+            output[:, i:i + chunk_size, :, :] = z
+        
+        return output
+
+
+class ChunkMSARowAttentionWithPairBias(nn.Module):
+
+    def __init__(self, d_node, d_pair, c=32, n_head=8, p_drop=0.15):
+        super(ChunkMSARowAttentionWithPairBias, self).__init__()
+        self.d_node = d_node
+        self.d_pair = d_pair
+        self.c = c
+        self.n_head = n_head
+        self.p_drop = p_drop
+
+        self.layernormM = LayerNorm(d_node)
+        self.layernormZ = LayerNorm(d_pair)
+
+        _init_weights = torch.nn.init.normal_(torch.zeros([n_head, d_pair]),
+                                              std=1.0 / math.sqrt(d_pair))
+        self.linear_b_weights = nn.parameter.Parameter(data=_init_weights, requires_grad=True)
+
+        self.attention = SelfAttention(qkv_dim=d_node,
+                                       c=c,
+                                       n_head=n_head,
+                                       out_dim=d_node,
+                                       gating=True,
+                                       last_bias_fuse=True)
+
+        self.out_bias = nn.parameter.Parameter(data=torch.zeros((d_node,)), requires_grad=True)
+
+    def forward(self, M_raw, Z, M_mask):
+        
+        if CHUNK_SIZE == None:
+            ## Input projections
+            M = self.layernormM(M_raw)
+            Z = self.layernormZ(Z)
+            b = F.linear(Z, self.linear_b_weights)
+            b, work = gather_async(b, dim=1)
+            # b = rearrange(b, 'b q k h -> b h q k')
+            # padding_bias = (1e9 * (M_mask - 1.))[:, :, None, None, :]
+            M = self.attention(M, M_mask, (b, work))
+            dropout_mask = torch.ones_like(M[:, 0:1, :, :], device=M.device, dtype=M.dtype)
+            return bias_dropout_add(M, self.out_bias, dropout_mask, M_raw, prob=self.p_drop, training=self.training)
+
+        chunk_size = CHUNK_SIZE
+        para_dim_z = Z.shape[1]
+        para_dim_m = M_raw.shape[1]
+        # z is big, but b is small. So we compute z in chunk to get b, and recompute z in chunk later instead of storing it
+        b = torch.empty((Z.shape[0], Z.shape[1], Z.shape[2], self.n_head), device=Z.device, dtype=Z.dtype)
+        for i in range(0, para_dim_z, chunk_size):
+            z = self.layernormZ(Z[:, i:i + chunk_size, :, :])
+            b[:, i:i + chunk_size, :, :] = F.linear(z, self.linear_b_weights)
+        b, work = gather_async(b, dim=1)
+        b = gather_async_opp(b, work, dim=1)
+        b = rearrange(b, 'b q k h -> b h q k')
+        
+        output = torch.empty_like(M_raw)
+        dropout_mask = torch.ones_like(M_raw[:, 0:1, :, :], device=M_raw.device, dtype=M_raw.dtype)
+        for i in range(0, para_dim_m, chunk_size):
+            m_raw = M_raw[:, i:i + chunk_size, :, :]
+            m = self.layernormM(m_raw)
+            m_mask = M_mask[:, i:i + chunk_size, :]
+            
+            m = self.attention(m, m_mask, (b, -1))
+            m =  bias_dropout_add(m,
+                                    self.out_bias,
+                                    dropout_mask,
+                                    m_raw,
+                                    prob=self.p_drop,
+                                    training=self.training)
+            output[:, i:i + chunk_size, :, :] = m
+
+        return output
+
+class ChunkTriangleAttentionEndingNode(nn.Module):
+
+    def __init__(self, d_pair, p_drop, c=32, n_head=4):
+        super(ChunkTriangleAttentionEndingNode, self).__init__()
+        self.d_pair = d_pair
+        self.c = c
+        self.n_head = n_head
+        self.p_drop = p_drop
+
+        self.layernorm1 = LayerNorm(d_pair)
+        self.linear_b = Linear(d_pair, n_head, initializer='linear', use_bias=False)
+        self.attention = SelfAttention(qkv_dim=d_pair,
+                                       c=c,
+                                       n_head=n_head,
+                                       out_dim=d_pair,
+                                       gating=True,
+                                       last_bias_fuse=True)
+        self.out_bias = nn.parameter.Parameter(data=torch.zeros((d_pair,)), requires_grad=True)
+
+    def forward(self, Z_raw, Z_mask):
+        
+        if CHUNK_SIZE == None:  
+            Z = Z_raw.transpose(-2, -3)
+            Z_mask = Z_mask.transpose(-1, -2)
+
+            Z = self.layernorm1(Z)
+            b = self.linear_b(Z)
+            b, work = gather_async(b, dim=1)
+            Z = self.attention(Z, Z_mask, (b, work))
+            Z = Z.transpose(-2, -3)
+            dropout_mask = torch.ones_like(Z[:, :, 0:1, :], device=Z.device, dtype=Z.dtype)
+            return bias_dropout_add(Z,
+                                    self.out_bias,
+                                    dropout_mask,
+                                    Z_raw,
+                                    prob=self.p_drop,
+                                    training=self.training)
+
+        para_dim = Z_raw.shape[2]
+        chunk_size = CHUNK_SIZE
+        # z is big, but b is small. So we compute z in chunk to get b, and recompute z in chunk later instead of storing it
+        b = torch.empty((Z_raw.shape[0], Z_raw.shape[2], Z_raw.shape[1], self.n_head), device=Z_raw.device, dtype=Z_raw.dtype)
+        for i in range(0, para_dim, chunk_size):
+            z = Z_raw[:, :, i:i + chunk_size, :].transpose(-2, -3)
+            z = self.layernorm1(z)
+            b[:, i:i + chunk_size, :, :] = self.linear_b(z)
+        b, work = gather_async(b, dim=1)
+        b = gather_async_opp(b, work, dim=1)
+        b = rearrange(b, 'b q k h -> b h q k')
+        
+        output = torch.empty_like(Z_raw)
+        dropout_mask = torch.ones_like(Z_raw[:, :, 0:1, :], device=z.device, dtype=z.dtype)
+        for i in range(0, para_dim, chunk_size):
+            z_raw = Z_raw[:, :, i:i + chunk_size, :]
+            z = self.layernorm1(z_raw.transpose(-2, -3))
+            z_mask = Z_mask[:, :, i:i + chunk_size].transpose(-1, -2)
+
+            z = self.attention(z, z_mask, (b, -1)).transpose(-2, -3)
+            z =  bias_dropout_add(z,
+                                    self.out_bias,
+                                    dropout_mask,
+                                    z_raw,
+                                    prob=self.p_drop,
+                                    training=self.training)
+            output[:, :, i:i + chunk_size, :] = z
+        
+        return output
+
+
+class ChunkMSAColumnGlobalAttention(nn.Module):
+    def __init__(self, d_node, c=8, n_head=8):
+        super(ChunkMSAColumnGlobalAttention, self).__init__()
+
+        self.d_node = d_node
+        self.c = c
+        self.n_head = n_head
+
+        self.layernormM = LayerNorm(d_node)
+        self.global_attention = GlobalAttention(
+            qkv_dim=d_node, c=c, n_head=n_head, out_dim=d_node
+        )
+
+    def forward(self, M_raw, M_mask):
+        
+        para_dim = M_raw.shape[2]
+        if CHUNK_SIZE is None:
+            chunk_size = para_dim
+        else:
+            chunk_size = CHUNK_SIZE
+        
+        for i in range(0, para_dim, chunk_size):
+            m = M_raw[:, :, i:i + chunk_size, :].transpose(-2, -3)
+            m = self.layernormM(m)
+            m_mask = M_mask[:, :, i:i + chunk_size].transpose(-1, -2)
+            m = self.global_attention(m, m_mask)
+            m = m.transpose(-2, -3)
+            M_raw[:, :, i:i + chunk_size, :] += m
+        
+        return M_raw
+
+
+class RecyclingEmbedder(nn.Module):
+    """
+    Embeds the output of an iteration of the model for recycling.
+
+    Implements Algorithm 32.
+    """
+
+    def __init__(
+        self,
+        c_m: int,
+        c_z: int,
+        min_bin: float,
+        max_bin: float,
+        no_bins: int,
+        inf: float = 1e8,
+        **kwargs,
+    ):
+        """
+        Args:
+            c_m:
+                MSA channel dimension
+            c_z:
+                Pair embedding channel dimension
+            min_bin:
+                Smallest distogram bin (Angstroms)
+            max_bin:
+                Largest distogram bin (Angstroms)
+            no_bins:
+                Number of distogram bins
+        """
+        super(RecyclingEmbedder, self).__init__()
+
+        self.c_m = c_m
+        self.c_z = c_z
+        self.min_bin = min_bin
+        self.max_bin = max_bin
+        self.no_bins = no_bins
+        self.inf = inf
+
+        self.linear = Linear(self.no_bins, self.c_z)
+        self.layer_norm_m = LayerNorm(self.c_m)
+        self.layer_norm_z = LayerNorm(self.c_z)
+
+    def forward(
+        self,
+        m: torch.Tensor,
+        z: torch.Tensor,
+        x: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            m:
+                First row of the MSA embedding. [*, N_res, C_m]
+            z:
+                [*, N_res, N_res, C_z] pair embedding
+            x:
+                [*, N_res, 3] predicted C_beta coordinates
+        Returns:
+            m:
+                [*, N_res, C_m] MSA embedding update
+            z:
+                [*, N_res, N_res, C_z] pair embedding update
+        """
+        bins = torch.linspace(
+            self.min_bin,
+            self.max_bin,
+            self.no_bins,
+            dtype=x.dtype,
+            device=x.device,
+            requires_grad=False,
+        )
+
+        # [*, N, C_m]
+        m_update = self.layer_norm_m(m)
+
+        # This squared method might become problematic in FP16 mode.
+        # I'm using it because my homegrown method had a stubborn discrepancy I
+        # couldn't find in time.
+        squared_bins = bins ** 2
+        upper = torch.cat(
+            [squared_bins[1:], squared_bins.new_tensor([self.inf])], dim=-1
+        )
+        d = torch.sum(
+            (x[..., None, :] - x[..., None, :, :]) ** 2, dim=-1, keepdims=True
+        )
+        # [*, N, N, no_bins]
+        d = ((d > squared_bins) * (d < upper)).type(x.dtype)
+        
+        # [*, N, N, C_z]
+        para_dim = d.shape[1]
+        if CHUNK_SIZE == None:
+            chunk_size = para_dim
+        else:
+            chunk_size = CHUNK_SIZE * 48
+        
+        for i in range(0, para_dim, chunk_size):
+            di = self.linear(d[i:i + chunk_size, :, :])
+            z[i:i + chunk_size, :, :] = di + self.layer_norm_z(z[i:i + chunk_size, :, :])
+
+        return m_update, z
 
 
 class GlobalAttention(nn.Module):

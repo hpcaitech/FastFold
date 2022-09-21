@@ -11,6 +11,58 @@ from colossalai.core import global_context as gpc
 from .comm import _split, divide
 
 
+def broadcast_sync(src: int, tensor: Tensor, host: bool = False) -> Tensor:
+    if gpc.get_world_size(ParallelMode.TENSOR) == 1:
+        return 0
+
+    if host:
+        dist.broadcast(tensor,
+                            src=src,
+                            group=gpc.get_group(ParallelMode.TENSOR),
+                            async_op=False)
+        return 0
+
+    else:
+        output = torch.empty(list(tensor.shape), dtype=tensor.dtype, device=tensor.device)
+        dist.broadcast(output,
+                            src=src,
+                            group=gpc.get_group(ParallelMode.TENSOR),
+                            async_op=False)
+        return output
+
+
+def broadcast_async(src: int, tensor: Tensor, host: bool = False) -> Tensor:
+    if gpc.get_world_size(ParallelMode.TENSOR) == 1:
+        return 0
+
+    if host:
+        work = dist.broadcast(tensor,
+                            src=src,
+                            group=gpc.get_group(ParallelMode.TENSOR),
+                            async_op=True)
+        return work
+
+    else:
+        work = dist.broadcast(tensor,
+                            src=src,
+                            group=gpc.get_group(ParallelMode.TENSOR),
+                            async_op=True)
+        return work
+
+
+def broadcast_async_opp(work) -> Tensor:
+    work.wait()
+    return 0
+
+
+def get_rank():
+    return gpc.get_global_rank()
+
+
+def get_world_size():
+    return gpc.get_world_size(ParallelMode.TENSOR)
+
+
 def _gather_async(tensor: Tensor, dim: int = -1) -> Tensor:
     if gpc.get_world_size(ParallelMode.TENSOR) == 1:
         return tensor, None

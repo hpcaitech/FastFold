@@ -21,9 +21,8 @@ from colossalai.context.parallel_mode import ParallelMode
 from colossalai.core import global_context as gpc
 
 from fastfold.model.fastnn import MSAStack, OutProductMean, PairStack, ExtraMSAStack
-from fastfold.model.fastnn.ops import Transition
-from fastfold.model.fastnn.triangle import TriangleAttentionEndingNode, TriangleAttentionStartingNode, \
-                                           TriangleMultiplicationIncoming, TriangleMultiplicationOutgoing
+from fastfold.model.fastnn.ops import ChunkTransition, ChunkTriangleAttentionStartingNode, ChunkTriangleAttentionEndingNode, \
+                                      AsyncChunkTriangleMultiplicationOutgoing, AsyncChunkTriangleMultiplicationIncoming
 from fastfold.distributed.comm import gather, scatter
 from fastfold.distributed.comm import col_to_row, row_to_col, scatter
 from fastfold.distributed.comm_async import All_to_All_Async, All_to_All_Async_Opp
@@ -76,12 +75,12 @@ class EvoformerBlock(nn.Module):
 
         if not self.is_multimer:
             m = self.msa_stack(m, z, msa_mask)
-            z = z + self.communication(m, msa_mask)
+            z = self.communication(m, msa_mask, z)
             m, work = All_to_All_Async.apply(m, 1, 2)
             z = self.pair_stack(z, pair_mask)
             m = All_to_All_Async_Opp.apply(m, work, 1, 2)
         else:
-            z = z + self.communication(m, msa_mask)
+            z = self.communication(m, msa_mask, z)
             z_ori = z
             m, work = All_to_All_Async.apply(m, 1, 2)
             z = self.pair_stack(z, pair_mask)
@@ -158,14 +157,13 @@ class ExtraMSABlock(nn.Module):
 
         if not self.is_multimer:
             m = self.msa_stack(m, z, msa_mask)
-
-            z = z + self.communication(m, msa_mask)
+            z = self.communication(m, msa_mask, z)
             m, work = All_to_All_Async.apply(m, 1, 2)
             z = self.pair_stack(z, pair_mask)
             m = All_to_All_Async_Opp.apply(m, work, 1, 2)
 
         else:
-            z = z + self.communication(m, msa_mask)
+            z = self.communication(m, msa_mask, z)
             z_ori = z
             m, work = All_to_All_Async.apply(m, 1, 2)
             z = self.pair_stack(z, pair_mask)
@@ -212,19 +210,19 @@ class TemplatePairStackBlock(nn.Module):
         self.p_drop = dropout_rate
         self.hidden_c = int(c_t / self.n_head)
 
-        self.TriangleMultiplicationOutgoing = TriangleMultiplicationOutgoing(
+        self.TriangleMultiplicationOutgoing = AsyncChunkTriangleMultiplicationOutgoing(
             self.c_t, p_drop=self.p_drop, c=self.c_hidden_tri_mul
         )
-        self.TriangleMultiplicationIncoming = TriangleMultiplicationIncoming(
+        self.TriangleMultiplicationIncoming = AsyncChunkTriangleMultiplicationIncoming(
             self.c_t, p_drop=self.p_drop, c=self.c_hidden_tri_mul
         )
-        self.TriangleAttentionStartingNode = TriangleAttentionStartingNode(
+        self.TriangleAttentionStartingNode = ChunkTriangleAttentionStartingNode(
             self.c_t, p_drop=self.p_drop, c=self.c_hidden_tri_att, n_head=self.n_head
         )
-        self.TriangleAttentionEndingNode = TriangleAttentionEndingNode(
+        self.TriangleAttentionEndingNode = ChunkTriangleAttentionEndingNode(
             self.c_t, p_drop=self.p_drop, c=self.c_hidden_tri_att, n_head=self.n_head
         )
-        self.PairTransition = Transition(d=self.c_t, n=pair_transition_n)
+        self.PairTransition = ChunkTransition(d=self.c_t, n=pair_transition_n)
 
     def forward(
         self,
@@ -245,12 +243,11 @@ class TemplatePairStackBlock(nn.Module):
 
         mask = torch.nn.functional.pad(mask, (0, padding_size, 0, padding_size))
 
-        single_templates = [t.unsqueeze(-4) for t in torch.unbind(z, dim=-4)]
-        single_templates_masks = [m.unsqueeze(-3) for m in torch.unbind(mask, dim=-3)]
-
-        for i in range(len(single_templates)):
-            single = single_templates[i]
-            single_mask = single_templates_masks[i]
+        # single_templates = [t.unsqueeze(-4) for t in torch.unbind(z, dim=-4)]
+        # single_templates_masks = [m.unsqueeze(-3) for m in torch.unbind(mask, dim=-3)]
+        for i in range(z.shape[0]):
+            single = z[i].unsqueeze(-4)
+            single_mask = mask[i].unsqueeze(-3)
 
             single_mask_row = scatter(single_mask, dim=1)
             single_mask_col = scatter(single_mask, dim=2)
@@ -264,10 +261,9 @@ class TemplatePairStackBlock(nn.Module):
             single = self.TriangleAttentionEndingNode(single, single_mask_col)
             single = self.PairTransition(single)
             single = col_to_row(single)
+            z[i] = single
 
-            single_templates[i] = single
-
-        z = torch.cat(single_templates, dim=-4)
+        # z = torch.cat(single_templates, dim=-4)
         if self.last_block:
             z = gather(z, dim=1)
             z = z[:, :-padding_size, :-padding_size, :]
