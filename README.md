@@ -57,8 +57,8 @@ Run the following command to build a docker image from Dockerfile provided.
 > Building FastFold from scratch requires GPU support, you need to use Nvidia Docker Runtime as the default when doing `docker build`. More details can be found [here](https://stackoverflow.com/questions/59691207/docker-build-with-nvidia-runtime).
 
 ```shell
-cd ColossalAI
-docker build -t Fastfold ./docker
+cd FastFold
+docker build -t fastfold ./docker
 ```
 
 Run the following command to start the docker container in interactive mode.
