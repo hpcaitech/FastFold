@@ -162,7 +162,8 @@ class TemplateEmbedder(nn.Module):
         pair_mask, 
         templ_dim, 
         chunk_size, 
-        _mask_trans=True
+        _mask_trans=True,
+        inplace=False
     ):
         # Embed the templates one at a time (with a poor man's vmap)
         template_embeds = []
@@ -205,14 +206,25 @@ class TemplateEmbedder(nn.Module):
             # single_template_embeds.update({"pair": t})
 
             template_embeds.append(single_template_embeds)
+
             # [*, S_t, N, N, C_z]
-            t[i] = self.template_pair_stack(
-                tt, 
-                pair_mask.unsqueeze(-3).to(dtype=z.dtype), 
-                chunk_size=chunk_size,
-                _mask_trans=_mask_trans,
-            ).to(t.device)
-        del tt, single_template_embeds, single_template_feats
+            if inplace:
+                tt = [tt]
+                t[i] = self.template_pair_stack.inplace(
+                    tt, 
+                    pair_mask.unsqueeze(-3).to(dtype=z.dtype), 
+                    chunk_size=chunk_size,
+                    _mask_trans=_mask_trans,
+                )[0].to(t.device)
+            else:
+                t[i] = self.template_pair_stack(
+                    tt, 
+                    pair_mask.unsqueeze(-3).to(dtype=z.dtype), 
+                    chunk_size=chunk_size,
+                    _mask_trans=_mask_trans,
+                ).to(t.device)
+
+        del tt, single_template_feats
 
         template_embeds = dict_multimap(
             partial(torch.cat, dim=templ_dim),
@@ -220,20 +232,16 @@ class TemplateEmbedder(nn.Module):
         )
 
         # [*, N, N, C_z]
-        t = self.template_pointwise_att(
-            t.to(z.device), 
-            z, 
+        z = self.template_pointwise_att(
+            t,
+            z,
             template_mask=batch["template_mask"].to(dtype=z.dtype),
             chunk_size=chunk_size * 256 if chunk_size is not None else chunk_size,
         )
 
-        t = t * (torch.sum(batch["template_mask"]) > 0)
-
         ret = {}
         if self.config.embed_angles:
             ret["template_single_embedding"] = template_embeds["angle"]
-
-        z += t
 
         return ret, z
 

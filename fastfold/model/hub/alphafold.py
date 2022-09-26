@@ -281,7 +281,8 @@ class AlphaFold(nn.Module):
                     z,
                     pair_mask.to(dtype=z.dtype),
                     no_batch_dims,
-                    self.globals.chunk_size
+                    self.globals.chunk_size,
+                    inplace=self.globals.inplace
                 )
 
             if(
@@ -320,28 +321,54 @@ class AlphaFold(nn.Module):
             extra_msa_feat = self.extra_msa_embedder(extra_msa_feat)
 
             # [*, N, N, C_z]
-            z = self.extra_msa_stack(
-                extra_msa_feat,
-                z,
-                msa_mask=feats["extra_msa_mask"].to(dtype=extra_msa_feat.dtype),
-                chunk_size=self.globals.chunk_size,
-                pair_mask=pair_mask.to(dtype=z.dtype),
-                _mask_trans=self.config._mask_trans,
-            )
+            if not self.globals.inplace or self.globals.is_multimer:
+                z = self.extra_msa_stack(
+                    extra_msa_feat,
+                    z,
+                    msa_mask=feats["extra_msa_mask"].to(dtype=extra_msa_feat.dtype),
+                    chunk_size=self.globals.chunk_size,
+                    pair_mask=pair_mask.to(dtype=z.dtype),
+                    _mask_trans=self.config._mask_trans,
+                )
+            else:
+                extra_msa_feat = [extra_msa_feat]
+                z = [z]
+                z = self.extra_msa_stack.inplace(
+                    extra_msa_feat,
+                    z,
+                    msa_mask=feats["extra_msa_mask"].to(dtype=extra_msa_feat[0].dtype),
+                    chunk_size=self.globals.chunk_size,
+                    pair_mask=pair_mask.to(dtype=z[0].dtype),
+                    _mask_trans=self.config._mask_trans,
+                )[0]
         del extra_msa_feat, extra_msa_fn
 
         # Run MSA + pair embeddings through the trunk of the network
         # m: [*, S, N, C_m]
         # z: [*, N, N, C_z]
         # s: [*, N, C_s]
-        m, z, s = self.evoformer(
-            m,
-            z,
-            msa_mask=msa_mask.to(dtype=m.dtype),
-            pair_mask=pair_mask.to(dtype=z.dtype),
-            chunk_size=self.globals.chunk_size,
-            _mask_trans=self.config._mask_trans,
-        )
+        if not self.globals.inplace or self.globals.is_multimer:
+            m, z, s = self.evoformer(
+                m,
+                z,
+                msa_mask=msa_mask.to(dtype=m.dtype),
+                pair_mask=pair_mask.to(dtype=z.dtype),
+                chunk_size=self.globals.chunk_size,
+                _mask_trans=self.config._mask_trans,
+            )
+        else:
+            m = [m]
+            z = [z]
+            m, z, s = self.evoformer.inplace(
+                m,
+                z,
+                msa_mask=msa_mask.to(dtype=m[0].dtype),
+                pair_mask=pair_mask.to(dtype=z[0].dtype),
+                chunk_size=self.globals.chunk_size,
+                _mask_trans=self.config._mask_trans,
+            )
+            m = m[0]
+            z = z[0]
 
         outputs["msa"] = m[..., :n_seq, :, :]
         outputs["pair"] = z

@@ -101,6 +101,7 @@ def add_data_args(parser: argparse.ArgumentParser):
     parser.add_argument('--release_dates_path', type=str, default=None)
     parser.add_argument('--chunk_size', type=int, default=None)
     parser.add_argument('--enable_workflow', default=False, action='store_true', help='run inference with ray workflow or not')
+    parser.add_argument('--inplace', default=False, action='store_true')
 
 
 def inference_model(rank, world_size, result_q, batch, args):
@@ -113,6 +114,7 @@ def inference_model(rank, world_size, result_q, batch, args):
     config = model_config(args.model_name)
     if args.chunk_size:
         config.globals.chunk_size = args.chunk_size
+    config.globals.inplace = args.inplace
     model = AlphaFold(config)
     import_jax_weights_(model, args.param_path, version=args.model_name)
 

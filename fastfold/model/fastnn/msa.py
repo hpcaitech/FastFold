@@ -169,3 +169,15 @@ class ExtraMSAStack(nn.Module):
         node = self.MSATransition(node)
 
         return node
+
+    def inplace(self, node, pair, node_mask):
+        node_mask_row = scatter(node_mask, dim=1)
+        node = self.MSARowAttentionWithPairBias.inplace(node, pair, node_mask_row)
+
+        node[0] = row_to_col(node[0])
+        node_mask_col = scatter(node_mask, dim=2)
+
+        node = self.MSAColumnAttention.inplace(node, node_mask_col)
+        node = self.MSATransition.inplace(node)
+
+        return node

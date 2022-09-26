@@ -1,6 +1,8 @@
-# add `--gpus [N]` to use N gpus for inference
-# add `--enable_workflow` to use parallel workflow for data processing
-# add `--use_precomputed_alignments [path_to_alignments]` to use precomputed msa
+# add '--gpus [N]' to use N gpus for inference
+# add '--enable_workflow' to use parallel workflow for data processing
+# add '--use_precomputed_alignments [path_to_alignments]' to use precomputed msa
+# add '--chunk_size [N]' to use chunk to reduce peak memory
+# add '--inplace' to use inplace to save memory
 
 python inference.py target.fasta data/pdb_mmcif/mmcif_files \
     --output_dir ./ \

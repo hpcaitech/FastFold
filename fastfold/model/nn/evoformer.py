@@ -533,6 +533,60 @@ class EvoformerStack(nn.Module):
         
         return m, z, s
 
+    def inplace(self,
+        m: torch.Tensor,
+        z: torch.Tensor,
+        msa_mask: torch.Tensor,
+        pair_mask: torch.Tensor,
+        chunk_size: int,
+        _mask_trans: bool = True,
+    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Args:
+            m:
+                [*, N_seq, N_res, C_m] MSA embedding
+            z:
+                [*, N_res, N_res, C_z] pair embedding
+            msa_mask:
+                [*, N_seq, N_res] MSA mask
+            pair_mask:
+                [*, N_res, N_res] pair mask
+        Returns:
+            m:
+                [*, N_seq, N_res, C_m] MSA embedding
+            z:
+                [*, N_res, N_res, C_z] pair embedding
+            s:
+                [*, N_res, C_s] single embedding (or None if extra MSA stack)
+        """
+        blocks = [
+            partial(
+                b.inplace,
+                msa_mask=msa_mask,
+                pair_mask=pair_mask,
+                chunk_size=chunk_size,
+                _mask_trans=_mask_trans,
+            )
+            for b in self.blocks
+        ]
+
+        if(self.clear_cache_between_blocks):
+            def block_with_cache_clear(block, *args):
+                torch.cuda.empty_cache()
+                return block(*args)
+
+            blocks = [partial(block_with_cache_clear, b) for b in blocks]
+
+        m, z = checkpoint_blocks(
+            blocks,
+            args=(m, z),
+            blocks_per_ckpt=self.blocks_per_ckpt if self.training else None,
+        )
+
+        s = self.linear(m[0][..., 0, :, :])
+        
+        return m, z, s
+
 
 class ExtraMSAStack(nn.Module):
     """
@@ -621,6 +675,52 @@ class ExtraMSAStack(nn.Module):
 
         for b in self.blocks:
             m, z = b(m, z, msa_mask, pair_mask, chunk_size=chunk_size)
+
+            if(self.clear_cache_between_blocks):
+                torch.cuda.empty_cache()
+
+        return z
+
+    def inplace(self,
+        m: torch.Tensor,
+        z: torch.Tensor,
+        chunk_size: int,
+        msa_mask: Optional[torch.Tensor] = None,
+        pair_mask: Optional[torch.Tensor] = None,
+        _mask_trans: bool = True,
+    ) -> torch.Tensor:
+        """
+        Args:
+            m:
+                [*, N_extra, N_res, C_m] extra MSA embedding
+            z:
+                [*, N_res, N_res, C_z] pair embedding
+            msa_mask:
+                Optional [*, N_extra, N_res] MSA mask
+            pair_mask:
+                Optional [*, N_res, N_res] pair mask
+        Returns:
+            [*, N_res, N_res, C_z] pair update
+        """ 
+        #checkpoint_fn = get_checkpoint_fn()
+        #blocks = [
+        #    partial(b, msa_mask=msa_mask, pair_mask=pair_mask, chunk_size=chunk_size, _chunk_logits=None) for b in self.blocks
+        #]
+
+        #def dodo(b, *args):
+        #    torch.cuda.empty_cache()
+        #    return b(*args)
+
+        #blocks = [partial(dodo, b) for b in blocks]
+
+        #for b in blocks:
+        #    if(torch.is_grad_enabled()):
+        #        m, z = checkpoint_fn(b, *(m, z))
+        #    else:
+        #        m, z = b(m, z)
+
+        for b in self.blocks:
+            m, z = b.inplace(m, z, msa_mask, pair_mask, chunk_size=chunk_size)
 
             if(self.clear_cache_between_blocks):
                 torch.cuda.empty_cache()
