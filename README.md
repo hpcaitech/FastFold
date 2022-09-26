@@ -143,6 +143,27 @@ python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
     --enable_workflow 
 ```
 
+#### inference with lower memory usage
+Alphafold's embedding presentations take up a lot of memory as the sequence length increases. To reduce memory usage, 
+you should add parameter `--chunk_size [N]` and `--inplace` to cmdline or shell script `./inference.sh`. 
+The smaller you set N, the less memory will be used, but it will affect the speed. We can inference 
+a sequence of length 7000 in fp32 on a 80G A100.
+```shell
+python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
+    --output_dir ./ \
+    --gpus 2 \
+    --uniref90_database_path data/uniref90/uniref90.fasta \
+    --mgnify_database_path data/mgnify/mgy_clusters_2018_12.fa \
+    --pdb70_database_path data/pdb70/pdb70 \
+    --uniclust30_database_path data/uniclust30/uniclust30_2018_08/uniclust30_2018_08 \
+    --bfd_database_path data/bfd/bfd_metaclust_clu_complete_id30_c90_final_seq.sorted_opt \
+    --jackhmmer_binary_path `which jackhmmer` \
+    --hhblits_binary_path `which hhblits` \
+    --hhsearch_binary_path `which hhsearch` \
+    --kalign_binary_path `which kalign`  \
+    --chunk_size N \
+    --inplace
+```
 
 ## Performance Benchmark
 
