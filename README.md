@@ -165,6 +165,29 @@ python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
     --inplace
 ```
 
+#### inference multimer sequence
+Alphafold Multimer is supported. You can the following cmd or shell script `./inference_multimer.sh`.
+Workflow and memory parameters mentioned above can also be used.
+```shell
+python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
+    --output_dir ./ \
+    --gpus 2 \
+    --model_preset multimer \
+    --uniref90_database_path data/uniref90/uniref90.fasta \
+    --mgnify_database_path data/mgnify/mgy_clusters_2018_12.fa \
+    --pdb70_database_path data/pdb70/pdb70 \
+    --uniclust30_database_path data/uniclust30/uniclust30_2018_08/uniclust30_2018_08 \
+    --bfd_database_path data/bfd/bfd_metaclust_clu_complete_id30_c90_final_seq.sorted_opt \
+    --uniprot_database_path data/uniprot/uniprot_sprot.fasta \
+    --pdb_seqres_database_path data/pdb_seqres/pdb_seqres.txt  \
+    --param_path data/params/params_model_1_multimer.npz \
+    --model_name model_1_multimer \
+    --jackhmmer_binary_path `which jackhmmer` \
+    --hhblits_binary_path `which hhblits` \
+    --hhsearch_binary_path `which hhsearch` \
+    --kalign_binary_path `which kalign`
+```
+
 ## Performance Benchmark
 
 We have included a performance benchmark script in `./benchmark`. You can benchmark the performance of Evoformer using different settings.

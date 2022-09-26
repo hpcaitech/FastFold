@@ -137,7 +137,7 @@ class FastFoldMultimerDataWorkFlow:
 
 
     def run(self, fasta_path: str, alignment_dir: str=None, storage_dir: str=None) -> None:
-        storage_dir = "file:///tmp/ray/lcmql/workflow_data"
+        storage_dir = "file:///tmp/ray/" + os.getlogin() + "/workflow_data"
         if storage_dir is not None:
             if not os.path.exists(storage_dir):
                 os.makedirs(storage_dir)
