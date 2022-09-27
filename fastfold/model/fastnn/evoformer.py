@@ -15,7 +15,7 @@ class Evoformer(nn.Module):
 
     def forward(self, node, pair, node_mask, pair_mask):
         node = self.msa_stack(node, pair, node_mask)
-        pair = pair + self.communication(node, node_mask)
+        pair = self.communication(node, node_mask, pair)
         node, work = All_to_All_Async.apply(node, 1, 2)
         pair = self.pair_stack(pair, pair_mask)
         node = All_to_All_Async_Opp.apply(node, work, 1, 2)

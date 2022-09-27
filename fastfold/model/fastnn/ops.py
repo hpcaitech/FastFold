@@ -19,7 +19,7 @@ import math
 from einops import rearrange
 from typing import Tuple
 from fastfold.model.fastnn.kernel import mask_softmax, mask_bias_softmax
-from fastfold.model.fastnn.kernel import LayerNorm
+from fastfold.model.fastnn.triton import LayerNorm
 
 from .initializer import glorot_uniform_af
 
@@ -140,6 +140,7 @@ class OutProductMean(nn.Module):
         self.n_feat_proj = n_feat_proj
 
     def forward(self, M, M_mask, Z_raw):
+        Z = torch.empty_like(Z_raw)
         M = self.layernormM(M)
         right_act = self.linear_b(M)
         right_act_all, work = gather_async(right_act, dim=2)
@@ -165,9 +166,9 @@ class OutProductMean(nn.Module):
             O = rearrange(O, 'b i j d e -> b i j (d e)')
             O = self.o_linear(O)
             norm0 = norm[:, ax:ax + chunk_size, :, :]
-            Z_raw[:, ax:ax + chunk_size, :, :] += O / norm0
+            Z[:, ax:ax + chunk_size, :, :] += O / norm0
 
-        return Z_raw
+        return Z
 
     def inplace(self, M, M_mask, Z_raw):
         
