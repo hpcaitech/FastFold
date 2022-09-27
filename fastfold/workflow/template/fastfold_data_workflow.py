@@ -122,7 +122,7 @@ class FastFoldDataWorkFlow:
         storage_dir = "file:///tmp/ray/" + os.getlogin() + "/workflow_data"
         if storage_dir is not None:
             if not os.path.exists(storage_dir):
-                os.makedirs(storage_dir, exist_ok=True)
+                os.makedirs(storage_dir[7:], exist_ok=True)
             if not ray.is_initialized():
                 ray.init(storage=storage_dir)
 
