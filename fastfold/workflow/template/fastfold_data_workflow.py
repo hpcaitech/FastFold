@@ -165,3 +165,5 @@ class FastFoldDataWorkFlow:
 
         # run workflow
         batch_run(workflow_id=workflow_id, dags=[hhs_node, mgnify_node, bfd_node]) 
+
+        return
