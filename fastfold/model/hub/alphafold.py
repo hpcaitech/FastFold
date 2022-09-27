@@ -88,9 +88,11 @@ class AlphaFold(nn.Module):
             **extra_msa_config["extra_msa_embedder"],
         )
         self.extra_msa_stack = ExtraMSAStack(
+            is_multimer=self.globals.is_multimer,
             **extra_msa_config["extra_msa_stack"],
         )
         self.evoformer = EvoformerStack(
+            is_multimer=self.globals.is_multimer,
             **config["evoformer_stack"],
         )
         self.structure_module = StructureModule(
@@ -269,6 +271,7 @@ class AlphaFold(nn.Module):
                     no_batch_dims,
                     chunk_size=self.globals.chunk_size,
                     multichain_mask_2d=multichain_mask_2d,
+                    inplace=self.globals.inplace
                 )
                 feats["template_torsion_angles_mask"] = (
                     template_embeds["template_mask"]
@@ -302,12 +305,13 @@ class AlphaFold(nn.Module):
                         [feats["msa_mask"], torsion_angles_mask[..., 2]], 
                         dim=-2
                     )
+                    del torsion_angles_mask
                 else:
                     msa_mask = torch.cat(
                         [feats["msa_mask"], template_embeds["template_mask"]],
                         dim=-2,
                     )
-        del template_feats, template_embeds, torsion_angles_mask
+        del template_feats, template_embeds
 
         # Embed extra MSA features + merge with pairwise embeddings
         if self.config.extra_msa.enabled:
@@ -321,7 +325,7 @@ class AlphaFold(nn.Module):
             extra_msa_feat = self.extra_msa_embedder(extra_msa_feat)
 
             # [*, N, N, C_z]
-            if not self.globals.inplace or self.globals.is_multimer:
+            if not self.globals.inplace:
                 z = self.extra_msa_stack(
                     extra_msa_feat,
                     z,
@@ -347,7 +351,7 @@ class AlphaFold(nn.Module):
         # m: [*, S, N, C_m]
         # z: [*, N, N, C_z]
         # s: [*, N, C_s]
-        if not self.globals.inplace or self.globals.is_multimer:
+        if not self.globals.inplace:
             m, z, s = self.evoformer(
                 m,
                 z,
