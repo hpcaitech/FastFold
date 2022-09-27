@@ -137,12 +137,17 @@ class EvoformerBlock(nn.Module):
             z = self.pair_stack.inplace(z, pair_mask)
             m[0] = All_to_All_Async_Opp.apply(m[0], work, 1, 2)
         else:
-            z = self.communication(m, msa_mask, z)
-            z_ori = z
-            m, work = All_to_All_Async.apply(m, 1, 2)
-            z = self.pair_stack(z, pair_mask)
-            m = All_to_All_Async_Opp.apply(m, work, 1, 2)
-            m = self.msa_stack(m, z_ori, msa_mask)
+            # z = self.communication.inplace(m[0], msa_mask, z)
+            # z_ori = z[0].clone()
+            # m[0], work = All_to_All_Async.apply(m[0], 1, 2)
+            # z = self.pair_stack.inplace(z, pair_mask)
+            # m[0] = All_to_All_Async_Opp.apply(m[0], work, 1, 2)
+            # m[0] = self.msa_stack(m[0], z_ori, msa_mask)
+            z = self.communication.inplace(m[0], msa_mask, z)
+            m[0], work = All_to_All_Async.apply(m[0], 1, 2)
+            m[0] = All_to_All_Async_Opp.apply(m[0], work, 1, 2)
+            m[0] = self.msa_stack(m[0], z[0], msa_mask)
+            z = self.pair_stack.inplace(z, pair_mask)
 
         if self.last_block:
             m[0] = m[0].squeeze(0)
@@ -288,12 +293,17 @@ class ExtraMSABlock(nn.Module):
             z = self.pair_stack.inplace(z, pair_mask)
             m[0] = All_to_All_Async_Opp.apply(m[0], work, 1, 2)
         else:
-            z = self.communication(m, msa_mask, z)
-            z_ori = z
-            m, work = All_to_All_Async.apply(m, 1, 2)
-            z = self.pair_stack(z, pair_mask)
-            m = All_to_All_Async_Opp.apply(m, work, 1, 2)
-            m = self.msa_stack(m, z_ori, msa_mask)
+            # z = self.communication.inplace(m[0], msa_mask, z)
+            # z_ori = [z[0].clone()]
+            # m[0], work = All_to_All_Async.apply(m[0], 1, 2)
+            # z = self.pair_stack.inplace(z, pair_mask)
+            # m[0] = All_to_All_Async_Opp.apply(m[0], work, 1, 2)
+            # m = self.msa_stack.inplace(m, z_ori, msa_mask)
+            z = self.communication.inplace(m[0], msa_mask, z)
+            m[0], work = All_to_All_Async.apply(m[0], 1, 2)
+            m[0] = All_to_All_Async_Opp.apply(m[0], work, 1, 2)
+            m = self.msa_stack.inplace(m, z, msa_mask)
+            z = self.pair_stack.inplace(z, pair_mask)
 
         if self.last_block:
 

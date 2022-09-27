@@ -229,6 +229,7 @@ class EvoformerBlock(nn.Module):
         pair_dropout: float,
         inf: float,
         eps: float,
+        is_multimer: bool,
     ):
         super(EvoformerBlock, self).__init__()
 
@@ -268,6 +269,7 @@ class EvoformerBlock(nn.Module):
             c_z,
             c_hidden_opm,
         )
+        self.is_multimer = is_multimer
 
     def forward(self,
         m: torch.Tensor,
@@ -315,6 +317,7 @@ class ExtraMSABlock(nn.Module):
         inf: float,
         eps: float,
         ckpt: bool,
+        is_multimer: bool,
     ):
         super(ExtraMSABlock, self).__init__()
         
@@ -351,6 +354,7 @@ class ExtraMSABlock(nn.Module):
             inf=inf,
             eps=eps,
         )
+        self.is_multimer = is_multimer
 
     def forward(self,
         m: torch.Tensor,
@@ -415,6 +419,7 @@ class EvoformerStack(nn.Module):
         inf: float,
         eps: float,
         clear_cache_between_blocks: bool = False, 
+        is_multimer: bool = False,
         **kwargs,
     ):
         """
@@ -474,6 +479,7 @@ class EvoformerStack(nn.Module):
                 pair_dropout=pair_dropout,
                 inf=inf,
                 eps=eps,
+                is_multimer=is_multimer,
             )
             self.blocks.append(block)
 
@@ -610,6 +616,7 @@ class ExtraMSAStack(nn.Module):
         eps: float,
         ckpt: bool,
         clear_cache_between_blocks: bool = False,
+        is_multimer: bool = False,
         **kwargs,
     ):
         super(ExtraMSAStack, self).__init__()
@@ -632,6 +639,7 @@ class ExtraMSAStack(nn.Module):
                 inf=inf,
                 eps=eps,
                 ckpt=ckpt,
+                is_multimer=is_multimer,
             )
             self.blocks.append(block)
 
