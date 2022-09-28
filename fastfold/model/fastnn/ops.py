@@ -18,8 +18,8 @@ import torch.nn.functional as F
 import math
 from einops import rearrange
 from typing import Tuple
-from fastfold.model.fastnn.kernel import mask_softmax, mask_bias_softmax
 from fastfold.model.fastnn.triton import LayerNorm
+from fastfold.model.fastnn.triton import mask_softmax, mask_bias_softmax
 
 from .initializer import glorot_uniform_af
 
