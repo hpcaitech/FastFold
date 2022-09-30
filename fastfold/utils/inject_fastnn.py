@@ -228,10 +228,12 @@ def inject_evoformer(model):
         for block_id, ori_block in enumerate(model.evoformer.blocks):
             c_m = ori_block.msa_att_row.c_in
             c_z = ori_block.msa_att_row.c_z
+            is_multimer = ori_block.is_multimer
             fastfold_block = EvoformerBlock(c_m=c_m,
                                             c_z=c_z,
                                             first_block=(block_id == 0),
-                                            last_block=(block_id == len(model.evoformer.blocks) - 1)
+                                            last_block=(block_id == len(model.evoformer.blocks) - 1),
+                                            is_multimer=is_multimer,
                                         )
 
             copy_evoformer_para(fastfold_block, ori_block)
@@ -249,11 +251,13 @@ def inject_extraMsaBlock(model):
         for block_id, ori_block in enumerate(model.extra_msa_stack.blocks):
             c_m = ori_block.msa_att_row.c_in
             c_z = ori_block.msa_att_row.c_z
+            is_multimer = ori_block.is_multimer
             new_model_block = ExtraMSABlock(
                 c_m=c_m,
                 c_z=c_z,
                 first_block=(block_id == 0),
                 last_block=(block_id == len(model.extra_msa_stack.blocks) - 1),
+                is_multimer=is_multimer
             )
 
             copy_extra_msa_para(new_model_block, ori_block)

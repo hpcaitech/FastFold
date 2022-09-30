@@ -675,17 +675,18 @@ class ChunkTriangleAttentionStartingNode(nn.Module):
     def inplace(self, Z_raw, Z_mask):
         
         if CHUNK_SIZE == None:        
-            Z = self.layernorm1(Z_raw)
+            Z = self.layernorm1(Z_raw[0])
             b = self.linear_b(Z)
             b, work = gather_async(b, dim=1)
             Z = self.attention(Z, Z_mask, (b, work))
             dropout_mask = torch.ones_like(Z[:, 0:1, :, :], device=Z.device, dtype=Z.dtype)
-            return bias_dropout_add(Z,
+            Z_raw[0] = bias_dropout_add(Z,
                                     self.out_bias,
                                     dropout_mask,
-                                    Z_raw,
+                                    Z_raw[0],
                                     prob=self.p_drop,
                                     training=self.training)
+            return Z_raw
         
         chunk_size = CHUNK_SIZE
         para_dim = Z_raw[0].shape[1]
@@ -795,7 +796,7 @@ class ChunkMSARowAttentionWithPairBias(nn.Module):
         
         if CHUNK_SIZE == None:
             ## Input projections
-            M = self.layernormM(M_raw)
+            M = self.layernormM(M_raw[0])
             Z = self.layernormZ(Z)
             b = F.linear(Z, self.linear_b_weights)
             b, work = gather_async(b, dim=1)
@@ -803,15 +804,16 @@ class ChunkMSARowAttentionWithPairBias(nn.Module):
             # padding_bias = (1e9 * (M_mask - 1.))[:, :, None, None, :]
             M = self.attention(M, M_mask, (b, work))
             dropout_mask = torch.ones_like(M[:, 0:1, :, :], device=M.device, dtype=M.dtype)
-            return bias_dropout_add(M, self.out_bias, dropout_mask, M_raw, prob=self.p_drop, training=self.training)
+            M_raw[0] = bias_dropout_add(M, self.out_bias, dropout_mask, M_raw[0], prob=self.p_drop, training=self.training)
+            return M_raw
 
         chunk_size = CHUNK_SIZE
-        para_dim_z = Z[0].shape[1]
+        para_dim_z = Z.shape[1]
         para_dim_m = M_raw[0].shape[1]
         # z is big, but b is small. So we compute z in chunk to get b, and recompute z in chunk later instead of storing it
-        b = torch.empty((Z[0].shape[0], Z[0].shape[1], Z[0].shape[2], self.n_head), device=Z[0].device, dtype=Z[0].dtype)
+        b = torch.empty((Z.shape[0], Z.shape[1], Z.shape[2], self.n_head), device=Z.device, dtype=Z.dtype)
         for i in range(0, para_dim_z, chunk_size):
-            z = self.layernormZ(Z[0][:, i:i + chunk_size, :, :])
+            z = self.layernormZ(Z[:, i:i + chunk_size, :, :])
             b[:, i:i + chunk_size, :, :] = F.linear(z, self.linear_b_weights)
         b, work = gather_async(b, dim=1)
         b = gather_async_opp(b, work, dim=1)
@@ -910,7 +912,7 @@ class ChunkTriangleAttentionEndingNode(nn.Module):
     def inplace(self, Z_raw, Z_mask):
         
         if CHUNK_SIZE == None:  
-            Z = Z_raw.transpose(-2, -3)
+            Z = Z_raw[0].transpose(-2, -3)
             Z_mask = Z_mask.transpose(-1, -2)
 
             Z = self.layernorm1(Z)
@@ -919,12 +921,13 @@ class ChunkTriangleAttentionEndingNode(nn.Module):
             Z = self.attention(Z, Z_mask, (b, work))
             Z = Z.transpose(-2, -3)
             dropout_mask = torch.ones_like(Z[:, :, 0:1, :], device=Z.device, dtype=Z.dtype)
-            return bias_dropout_add(Z,
+            Z_raw[0] =  bias_dropout_add(Z,
                                     self.out_bias,
                                     dropout_mask,
-                                    Z_raw,
+                                    Z_raw[0],
                                     prob=self.p_drop,
                                     training=self.training)
+            return Z_raw
 
         para_dim = Z_raw[0].shape[2]
         chunk_size = CHUNK_SIZE

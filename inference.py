@@ -115,6 +115,7 @@ def inference_model(rank, world_size, result_q, batch, args):
     if args.chunk_size:
         config.globals.chunk_size = args.chunk_size
     config.globals.inplace = args.inplace
+    config.globals.is_multimer = args.model_preset == 'multimer'
     model = AlphaFold(config)
     import_jax_weights_(model, args.param_path, version=args.model_name)
 

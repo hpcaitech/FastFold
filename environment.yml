@@ -13,12 +13,12 @@ dependencies:
       - requests==2.26.0
       - scipy==1.7.1
       - tqdm==4.62.2
-      - typing-extensions==3.10.0.2
+      - typing-extensions==4.3.0
       - einops
-      - colossalai
       - ray==2.0.0
       - pyarrow
       - pandas
+      - --find-links https://release.colossalai.org colossalai
       - --find-links https://download.pytorch.org/whl/cu113/torch_stable.html torch==1.11.1+cu113
       - --find-links https://download.pytorch.org/whl/cu113/torch_stable.html torchaudio==0.11.1+cu113
       - --find-links https://download.pytorch.org/whl/cu113/torch_stable.html torchvision==0.13.1
