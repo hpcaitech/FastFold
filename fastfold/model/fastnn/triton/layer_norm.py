@@ -148,8 +148,9 @@ def _layer_norm_bwd_dwdb(
 
 class LayerNormTritonFunc(torch.autograd.Function):
 
-    def forward(ctx, a, normalized_shape, weight, bias, eps):
+    def forward(ctx, a_raw, normalized_shape, weight, bias, eps):
         # allocate output
+        a = a_raw.contiguous()
         out = torch.empty_like(a)
         # reshape input data into 2D tensor
         a_arg = a.reshape(-1, a.shape[-1])

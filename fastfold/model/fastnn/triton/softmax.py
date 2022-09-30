@@ -236,7 +236,7 @@ def softmax_mask_kernel(output_ptr, input_ptr, mask_ptr, input_row_stride, outpu
     # Load the row into SRAM, using a mask since BLOCK_SIZE may be > than n_cols
     row = tl.load(input_ptrs, mask=col_offsets < n_cols, other=float("-inf")).to(tl.float32)
     mask = tl.load(mask_ptrs, mask=col_offsets < n_cols, other=float("-inf")).to(tl.float32)
-    row = tl.where(mask == 0, float("-inf"), row)
+    row = tl.where(mask == 0, float("-1e10"), row)
     # Substract maximum for numerical stability
     row_minus_max = row - tl.max(row, axis=0)
     # Note that exponentials in Triton are fast but approximate (i.e., think __expf in CUDA)
@@ -265,7 +265,7 @@ def softmax_mask_kernel_two_rows(output_ptr, input_ptr, mask_ptr, input_row_stri
     # Load the row into SRAM, using a mask since BLOCK_SIZE may be > than n_cols
     row = tl.load(input_ptrs, mask=col_offsets < n_cols, other=-float('inf')).to(tl.float32)
     mask = tl.load(mask_ptrs, mask=col_offsets < n_cols, other=float("-inf")).to(tl.float32)
-    row = tl.where(mask == 0, float("-inf"), row)
+    row = tl.where(mask == 0, float("-1e10"), row)
     # Substract maximum for numerical stability
     row_minus_max = row - tl.max(row, axis=0)
     # Note that exponentials in Triton are fast but approximate (i.e., think __expf in CUDA)
@@ -282,7 +282,7 @@ def softmax_mask_kernel_two_rows(output_ptr, input_ptr, mask_ptr, input_row_stri
     mask_start_ptr = mask_ptr + ((2 * row_idx + 1) // (n_heads * n_cols)) * n_cols
     mask_ptrs = mask_start_ptr + col_offsets
     mask = tl.load(mask_ptrs, mask=col_offsets < n_cols, other=float("-inf")).to(tl.float32)
-    row_2 = tl.where(mask == 0, float("-inf"), row)
+    row_2 = tl.where(mask == 0, float("-1e10"), row)
     row_minus_max_2 = row_2 - tl.max(row_2, axis=0)
     numerator_2 = tl.exp(row_minus_max_2)
     denominator_2 = tl.sum(numerator_2, axis=0)
@@ -487,7 +487,7 @@ def softmax_mask_bias_kernel(output_ptr, input_ptr, mask_ptr, bias_ptr, input_ro
     bias = tl.load(bias_ptrs, mask=col_offsets < n_cols, other=float("-inf")).to(tl.float32)
     row = row + bias
     mask = tl.load(mask_ptrs, mask=col_offsets < n_cols, other=float("-inf")).to(tl.float32)
-    row = tl.where(mask == 0, float("-inf"), row)
+    row = tl.where(mask == 0, float("-1e10"), row)
     # Substract maximum for numerical stability
     row_minus_max = row - tl.max(row, axis=0)
     # Note that exponentials in Triton are fast but approximate (i.e., think __expf in CUDA)
@@ -516,11 +516,11 @@ def softmax_mask_bias_kernel_two_rows(output_ptr, input_ptr, mask_ptr, bias_ptr,
     mask_ptrs = mask_start_ptr + col_offsets
     bias_ptrs = bias_start_ptr + col_offsets
     # Load the row into SRAM, using a mask since BLOCK_SIZE may be > than n_cols
-    row = tl.load(input_ptrs, mask=col_offsets < n_cols, other=-float('inf')).to(tl.float32)
+    row = tl.load(input_ptrs, mask=col_offsets < n_cols, other=float("-inf")).to(tl.float32)
     bias = tl.load(bias_ptrs, mask=col_offsets < n_cols, other=float("-inf")).to(tl.float32)
     mask = tl.load(mask_ptrs, mask=col_offsets < n_cols, other=float("-inf")).to(tl.float32)
     row = row + bias
-    row = tl.where(mask == 0, float("-inf"), row)
+    row = tl.where(mask == 0, float("-1e10"), row)
     # Substract maximum for numerical stability
     row_minus_max = row - tl.max(row, axis=0)
     # Note that exponentials in Triton are fast but approximate (i.e., think __expf in CUDA)
@@ -541,7 +541,7 @@ def softmax_mask_bias_kernel_two_rows(output_ptr, input_ptr, mask_ptr, bias_ptr,
     bias = tl.load(bias_ptrs, mask=col_offsets < n_cols, other=float("-inf")).to(tl.float32)
     mask = tl.load(mask_ptrs, mask=col_offsets < n_cols, other=float("-inf")).to(tl.float32)
     row = row + bias
-    row_2 = tl.where(mask == 0, float("-inf"), row)
+    row_2 = tl.where(mask == 0, float("-1e10"), row)
     row_minus_max_2 = row_2 - tl.max(row_2, axis=0)
     numerator_2 = tl.exp(row_minus_max_2)
     denominator_2 = tl.sum(numerator_2, axis=0)
