@@ -21,7 +21,7 @@ def main():
     parser.add_argument('--trials', default=20, type=int, help='Number of Trials to Execute')
     parser.add_argument('--warmup-trials', default=5, type=int, help='Warmup Trials to discard')
     parser.add_argument('--layers',
-                        default=8,
+                        default=4,
                         type=int,
                         help='Evoformer Layers to Execute')
     parser.add_argument('--cm', default=256, type=int, help='MSA hidden dimension')
@@ -37,7 +37,7 @@ def main():
 
     init_dap(args.dap_size)
 
-    precision = torch.float16
+    precision = torch.float32
     if args.dap_size > 1:
         # (PyTorch issue) Currently All2All communication does not support the Bfloat16 datatype in PyTorch
         precision = torch.float16
