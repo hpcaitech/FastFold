@@ -17,8 +17,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-# from fastfold.model.fastnn.kernel import LayerNorm
-from torch.nn import LayerNorm
+from fastfold.model.fastnn.kernel import LayerNorm
 
 from fastfold.model.fastnn.ops import ChunkMSARowAttentionWithPairBias, ChunkTransition, SelfAttention, GlobalAttention, Transition, ChunkMSAColumnGlobalAttention
 from fastfold.model.fastnn.kernel import bias_dropout_add

@@ -18,8 +18,8 @@ import torch.nn.functional as F
 import math
 from einops import rearrange
 from typing import Tuple
-from fastfold.model.fastnn.kernel import mask_softmax, mask_bias_softmax
 from fastfold.model.fastnn.kernel import LayerNorm
+from fastfold.model.fastnn.kernel import fused_softmax
 
 from .initializer import glorot_uniform_af
 
@@ -140,6 +140,7 @@ class OutProductMean(nn.Module):
         self.n_feat_proj = n_feat_proj
 
     def forward(self, M, M_mask, Z_raw):
+        Z = torch.empty_like(Z_raw)
         M = self.layernormM(M)
         right_act = self.linear_b(M)
         right_act_all, work = gather_async(right_act, dim=2)
@@ -165,9 +166,9 @@ class OutProductMean(nn.Module):
             O = rearrange(O, 'b i j d e -> b i j (d e)')
             O = self.o_linear(O)
             norm0 = norm[:, ax:ax + chunk_size, :, :]
-            Z_raw[:, ax:ax + chunk_size, :, :] += O / norm0
+            Z[:, ax:ax + chunk_size, :, :] += O / norm0
 
-        return Z_raw
+        return Z
 
     def inplace(self, M, M_mask, Z_raw):
         
@@ -317,9 +318,9 @@ class SelfAttention(nn.Module):
             logits = torch.matmul(q, k.transpose(-1, -2))
 
             if nonbatched_bias is not None:
-                weights = mask_bias_softmax(logits, mask_part, bias.unsqueeze(1))
+                weights = fused_softmax(logits, mask_part, bias.unsqueeze(1))
             else:
-                weights = mask_softmax(logits, mask)
+                weights = fused_softmax(logits, mask_part)
 
             weighted_avg = torch.matmul(weights, v)
             weighted_avg = rearrange(weighted_avg, 'b1 b2 h n d -> b1 b2 n (h d)')
@@ -1168,7 +1169,7 @@ class GlobalAttention(nn.Module):
 
             logits = torch.matmul(q, k.transpose(-1, -2))
 
-            weights = mask_softmax(logits, mask_part)
+            weights = fused_softmax(logits, mask_part)
 
             weighted_avg = torch.matmul(weights, v)
             weighted_avg = rearrange(weighted_avg, "b1 b2 h d -> b1 b2 (h d)")
