@@ -1,12 +1,8 @@
 import importlib
-import numbers
 
 import torch
-from torch.nn import init
-from torch.nn.parameter import Parameter
 
-global fastfold_layer_norm_cuda
-fastfold_layer_norm_cuda = None
+fastfold_layer_norm_cuda = importlib.import_module("fastfold_layer_norm_cuda")
 
 
 class FusedLayerNormAffineFunction(torch.autograd.Function):
@@ -37,34 +33,3 @@ class FusedLayerNormAffineFunction(torch.autograd.Function):
                 weight_, bias_, ctx.eps)
 
         return grad_input, grad_weight, grad_bias, None, None
-
-
-class MixedFusedLayerNorm(torch.nn.Module):
-
-    def __init__(self, normalized_shape, eps=1e-5):
-        super(MixedFusedLayerNorm, self).__init__()
-
-        global fastfold_layer_norm_cuda
-        if fastfold_layer_norm_cuda is None:
-            try:
-                fastfold_layer_norm_cuda = importlib.import_module("fastfold_layer_norm_cuda")
-            except ImportError:
-                raise RuntimeError('MixedFusedLayerNorm requires cuda extensions')
-
-        if isinstance(normalized_shape, numbers.Integral):
-            normalized_shape = (normalized_shape,)
-        self.normalized_shape = torch.Size(normalized_shape)
-        self.eps = eps
-        self.weight = Parameter(torch.Tensor(*normalized_shape))
-        self.bias = Parameter(torch.Tensor(*normalized_shape))
-        self.reset_parameters()
-
-    def reset_parameters(self):
-
-        init.ones_(self.weight)
-        init.zeros_(self.bias)
-
-    def forward(self, input):
-
-        return FusedLayerNormAffineFunction.apply(input, self.weight, self.bias,
-                                                  self.normalized_shape, self.eps)

@@ -1,7 +1,4 @@
-import numbers
-
 import torch
-from torch.nn.parameter import Parameter
 
 import triton
 import triton.language as tl
@@ -243,25 +240,3 @@ class LayerNormTritonFunc(torch.autograd.Function):
                                    BLOCK_SIZE_N=BLOCK_SIZE_N,
                                    num_warps=num_warps)
         return (da, None, dweight, dbias, None)
-
-
-class TritonLayerNorm(torch.nn.Module):
-
-    def __init__(self, normalized_shape, eps=1e-5):
-        super(TritonLayerNorm, self).__init__()
-
-        if isinstance(normalized_shape, numbers.Integral):
-            normalized_shape = (normalized_shape,)
-        self.normalized_shape = torch.Size(normalized_shape)
-        self.eps = eps
-        self.weight = Parameter(torch.Tensor(*normalized_shape))
-        self.bias = Parameter(torch.Tensor(*normalized_shape))
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        torch.nn.init.ones_(self.weight)
-        torch.nn.init.zeros_(self.bias)
-
-    def forward(self, input):
-        return LayerNormTritonFunc.apply(input, self.normalized_shape, self.weight, self.bias,
-                                         self.eps)
