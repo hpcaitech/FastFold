@@ -43,6 +43,9 @@ from fastfold.data.parsers import parse_fasta
 from fastfold.utils.import_weights import import_jax_weights_
 from fastfold.utils.tensor_utils import tensor_tree_map
 
+if int(torch.__version__.split(".")[0]) >= 1 and int(torch.__version__.split(".")[1]) > 11:
+    torch.backends.cuda.matmul.allow_tf32 = True
+
 @contextlib.contextmanager
 def temp_fasta_file(fasta_str: str):
     with tempfile.NamedTemporaryFile('w', suffix='.fasta') as fasta_file:
