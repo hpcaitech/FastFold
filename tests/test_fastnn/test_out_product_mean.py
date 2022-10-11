@@ -108,18 +108,18 @@ def test_out_product_mean():
     m_mask[:, :, -5:] = 0
     z = torch.zeros((1, seq_len, seq_len, dim_z)).cuda()
 
-    out1 = fast_opm(m, m_mask, z)
-    out2 = opm(m, m_mask)
-    assert torch.allclose(out1, out2, atol=1e-6)
+    out = fast_opm(m, m_mask, z)
+    
+    out_fast = opm(m, m_mask)
+    assert torch.allclose(out, out_fast, atol=1e-6)
 
     set_chunk_size(1)
-    out1 = fast_opm(m, m_mask, z)
-    out2 = opm(m, m_mask)
-    assert torch.allclose(out1, out2, atol=1e-6)
+    out_fast = opm(m, m_mask)
+    assert torch.allclose(out, out_fast, atol=1e-6)
 
-    out1 = opm(m, m_mask)
-    out2 = fast_opm.inplace(m, m_mask, [z])[0]
-    assert torch.allclose(out1, out2, atol=1e-6)
+    out_fast = fast_opm.inplace(m, m_mask, [z])[0]
+    assert torch.allclose(out, out_fast, atol=1e-6)
+
 
 if __name__ == "__main__":
     test_out_product_mean()
