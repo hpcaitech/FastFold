@@ -166,9 +166,9 @@ class OutProductMean(nn.Module):
             O = rearrange(O, 'b i j d e -> b i j (d e)')
             O = self.o_linear(O)
             norm0 = norm[:, ax:ax + chunk_size, :, :]
-            Z[:, ax:ax + chunk_size, :, :] += O / norm0
+            Z[:, ax:ax + chunk_size, :, :] = O / norm0
 
-        return Z
+        return Z + Z_raw
 
     def inplace(self, M, M_mask, Z_raw):
         
