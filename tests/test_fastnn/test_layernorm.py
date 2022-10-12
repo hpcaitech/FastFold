@@ -6,6 +6,7 @@ triton = True
 try:
     from fastfold.model.fastnn.kernel.layer_norm import LayerNormTritonFunc
 except:
+    print("Skip triton layernorm test!")
     triton = False
 
 
