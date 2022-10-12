@@ -29,8 +29,8 @@ def _softmax_core(input_ptrs, output_ptrs, mask_ptrs, bias_ptrs, col_offsets, n_
 @triton.jit
 def _softmax_grad_core(output_ptrs, d_output_ptrs, d_input_ptrs, mask_ptrs, col_offsets, n_cols,
                        is_bf16: tl.constexpr, use_mask: tl.constexpr):
-    output_row = tl.load(output_ptrs, mask=col_offsets < n_cols, other=float("-inf"))
-    d_output_row = tl.load(d_output_ptrs, mask=col_offsets < n_cols, other=float("-inf"))
+    output_row = tl.load(output_ptrs, mask=col_offsets < n_cols, other=float(0))
+    d_output_row = tl.load(d_output_ptrs, mask=col_offsets < n_cols, other=float(0))
 
     if is_bf16:
         output_row = output_row.to(tl.float32)
