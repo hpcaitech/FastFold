@@ -279,15 +279,25 @@ class AlphaFold(nn.Module):
                 # [*, N, N, C_z]
                 z = z + template_embeds["template_pair_embedding"]
             else:
-                template_embeds, z = self.template_embedder(
-                    template_feats,
-                    z,
-                    pair_mask.to(dtype=z.dtype),
-                    no_batch_dims,
-                    self.globals.chunk_size,
-                    inplace=self.globals.inplace
-                )
-
+                if self.globals.inplace:
+                    template_embeds = self.template_embedder(
+                        template_feats,
+                        z,
+                        pair_mask.to(dtype=z.dtype),
+                        no_batch_dims,
+                        self.globals.chunk_size,
+                        inplace=self.globals.inplace
+                    )
+                    z = template_embeds["template_pair_embedding"]
+                else:
+                    template_embeds = self.template_embedder(
+                        template_feats,
+                        z,
+                        pair_mask.to(dtype=z.dtype),
+                        no_batch_dims,
+                        self.globals.chunk_size,
+                    )
+                    z = z + template_embeds["template_pair_embedding"]
             if(
                 self.config.template.embed_angles or 
                 (self.globals.is_multimer and self.config.template.enabled)

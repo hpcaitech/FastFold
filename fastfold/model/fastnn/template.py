@@ -13,31 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from functools import partial
-import math
 from typing import Optional, List
 
 import torch
 import torch.nn as nn
 
-from fastfold.model.nn.primitives import Linear, LayerNorm, Attention
-from fastfold.model.nn.dropout import (
-    DropoutRowwise,
-    DropoutColumnwise,
-)
-from fastfold.model.nn.pair_transition import PairTransition
-from fastfold.model.nn.triangular_attention import (
-    TriangleAttentionStartingNode,
-    TriangleAttentionEndingNode,
-)
-from fastfold.model.nn.triangular_multiplicative_update import (
-    TriangleMultiplicationOutgoing,
-    TriangleMultiplicationIncoming,
-)
+from fastfold.model.nn.primitives import Attention
+from fastfold.model.fastnn.ops import LayerNorm
+from fastfold.model.fastnn import TemplatePairStackBlock
 from fastfold.utils.checkpointing import checkpoint_blocks
 from fastfold.utils.tensor_utils import (
     chunk_layer,
     permute_final_dims,
-    flatten_final_dims,
 )
 
 
@@ -69,7 +56,7 @@ class TemplatePointwiseAttention(nn.Module):
             self.c_t,
             self.c_hidden,
             self.no_heads,
-            gating=False,
+            gating=False
         )
 
     def _chunk(self,
@@ -122,145 +109,27 @@ class TemplatePointwiseAttention(nn.Module):
         # [*, N_res, N_res, 1, C_z]
         biases = [bias]
         if chunk_size is not None:
-            z = self._chunk(z, t, biases, chunk_size)
-        else:
-            z = self.mha(q_x=z, kv_x=t, biases=biases)
+            para_dim_t0 = t.shape[0]
+            para_dim_t1 = t.shape[1]
+            chunk_size_t = chunk_size * 4
+            mask = torch.sum(template_mask.to(z.device)) > 0
 
-        # [*, N_res, N_res, C_z]
+            for ti in range(0, para_dim_t0, chunk_size_t):
+                t0 = t[ti:ti + chunk_size_t, :, :, :]
+                t0 = t0.to(z.device)
+                para_dim_t_part = t0.shape[0]
+                for i in range(0, para_dim_t_part, chunk_size):
+                    for j in range(0, para_dim_t1, chunk_size):
+                        z[i + ti:i + ti + chunk_size, j:j + chunk_size, :, :] += self.mha(
+                            q_x=z[i + ti:i + ti + chunk_size, j:j + chunk_size, :, :], kv_x=t0[i:i + chunk_size, j:j + chunk_size, :, :], biases=biases
+                            ) * mask
+        else:
+            t = self.mha(q_x=z, kv_x=t, biases=biases)
+            # [*, N_res, N_res, C_z]
+            t = t * (torch.sum(template_mask) > 0)
+            z = z + t
+            
         z = z.squeeze(-2)
-
-        return z
-
-
-class TemplatePairStackBlock(nn.Module):
-    def __init__(
-        self,
-        c_t: int,
-        c_hidden_tri_att: int,
-        c_hidden_tri_mul: int,
-        no_heads: int,
-        pair_transition_n: int,
-        dropout_rate: float,
-        inf: float,
-        is_multimer: bool=False,
-        **kwargs,
-    ):
-        super(TemplatePairStackBlock, self).__init__()
-
-        self.c_t = c_t
-        self.c_hidden_tri_att = c_hidden_tri_att
-        self.c_hidden_tri_mul = c_hidden_tri_mul
-        self.no_heads = no_heads
-        self.pair_transition_n = pair_transition_n
-        self.dropout_rate = dropout_rate
-        self.inf = inf
-        self.is_multimer = is_multimer
-
-        self.dropout_row = DropoutRowwise(self.dropout_rate)
-        self.dropout_col = DropoutColumnwise(self.dropout_rate)
-
-        self.tri_att_start = TriangleAttentionStartingNode(
-            self.c_t,
-            self.c_hidden_tri_att,
-            self.no_heads,
-            inf=inf,
-        )
-        self.tri_att_end = TriangleAttentionEndingNode(
-            self.c_t,
-            self.c_hidden_tri_att,
-            self.no_heads,
-            inf=inf,
-        )
-
-        self.tri_mul_out = TriangleMultiplicationOutgoing(
-            self.c_t,
-            self.c_hidden_tri_mul,
-        )
-        self.tri_mul_in = TriangleMultiplicationIncoming(
-            self.c_t,
-            self.c_hidden_tri_mul,
-        )
-
-        self.pair_transition = PairTransition(
-            self.c_t,
-            self.pair_transition_n,
-        )
-
-    def forward(self, 
-        z: torch.Tensor, 
-        mask: torch.Tensor, 
-        chunk_size: Optional[int] = None, 
-        _mask_trans: bool = True
-    ):
-        single_templates = [
-            t.unsqueeze(-4) for t in torch.unbind(z, dim=-4)
-        ]
-        single_templates_masks = [
-            m.unsqueeze(-3) for m in torch.unbind(mask, dim=-3)
-        ]
-        if not self.is_multimer:
-            for i in range(len(single_templates)):
-                single = single_templates[i]
-                single_mask = single_templates_masks[i]
-                
-                single = single + self.dropout_row(
-                    self.tri_att_start(
-                        single,
-                        chunk_size=chunk_size,
-                        mask=single_mask
-                    )
-                )
-                single = single + self.dropout_col(
-                    self.tri_att_end(
-                        single,
-                        chunk_size=chunk_size,
-                        mask=single_mask
-                    )
-                )
-                single = single + self.dropout_row(
-                    self.tri_mul_out(
-                        single,
-                        mask=single_mask
-                    )
-                )
-                single = single + self.dropout_row(
-                    self.tri_mul_in(
-                        single,
-                        mask=single_mask
-                    )
-                )
-                single = single + self.pair_transition(
-                    single,
-                    mask=single_mask if _mask_trans else None,
-                    chunk_size=chunk_size,
-                )
-
-                single_templates[i] = single
-        else:
-            for i in range(len(single_templates)):
-                single = single_templates[i]
-                single_mask = single_templates_masks[i]
-
-                single = single + self.dropout_row(
-                    self.tri_att_start(single, chunk_size=chunk_size, mask=single_mask)
-                )
-                single = single + self.dropout_col(
-                    self.tri_att_end(single, chunk_size=chunk_size, mask=single_mask)
-                )
-                single = single + self.dropout_row(
-                    self.tri_mul_out(single, mask=single_mask)
-                )
-                single = single + self.dropout_row(
-                    self.tri_mul_in(single, mask=single_mask)
-                )
-                single = single + self.pair_transition(
-                    single,
-                    mask=single_mask if _mask_trans else None,
-                    chunk_size=chunk_size,
-                )
-                single_templates[i] = single
-
-        z = torch.cat(single_templates, dim=-4)
 
         return z
 
@@ -305,7 +174,7 @@ class TemplatePairStack(nn.Module):
         self.blocks_per_ckpt = blocks_per_ckpt
 
         self.blocks = nn.ModuleList()
-        for _ in range(no_blocks):
+        for block_id in range(no_blocks):
             block = TemplatePairStackBlock(
                 c_t=c_t,
                 c_hidden_tri_att=c_hidden_tri_att,
@@ -314,6 +183,8 @@ class TemplatePairStack(nn.Module):
                 pair_transition_n=pair_transition_n,
                 dropout_rate=dropout_rate,
                 inf=inf,
+                first_block=(block_id == 0),
+                last_block=(block_id == no_blocks - 1),
             )
             self.blocks.append(block)
 
@@ -353,7 +224,48 @@ class TemplatePairStack(nn.Module):
             args=(t,),
             blocks_per_ckpt=self.blocks_per_ckpt if self.training else None,
         )
+        if chunk_size is None:
+            chunk_size = t.shape[0]
+        for i in range(0, t.shape[0], chunk_size):
+            t[i:i + chunk_size] = self.layer_norm(t[i:i + chunk_size])
+        return t
+    
+    def inplace(
+        self,
+        t: torch.tensor,
+        mask: torch.tensor,
+        chunk_size: int,
+        _mask_trans: bool = True,
+    ):
+        """
+        Args:
+            t:
+                [*, N_templ, N_res, N_res, C_t] template embedding
+            mask:
+                [*, N_templ, N_res, N_res] mask
+        Returns:
+            [*, N_templ, N_res, N_res, C_t] template embedding update
+        """
+        if(mask.shape[-3] == 1):
+            expand_idx = list(mask.shape)
+            expand_idx[-3] = t[0].shape[-4]
+            mask = mask.expand(*expand_idx)
 
-        t = self.layer_norm(t)
-
+        t, = checkpoint_blocks(
+            blocks=[
+                partial(
+                    b.inplace,
+                    mask=mask,
+                    chunk_size=chunk_size,
+                    _mask_trans=_mask_trans,
+                )
+                for b in self.blocks
+            ],
+            args=(t,),
+            blocks_per_ckpt=self.blocks_per_ckpt if self.training else None,
+        )
+        if chunk_size is None:
+            chunk_size = t[0].shape[0]
+        for i in range(0, t[0].shape[0], chunk_size):
+            t[0][i:i + chunk_size] = self.layer_norm(t[0][i:i + chunk_size].to(mask.device)).to(t[0].device)
         return t
