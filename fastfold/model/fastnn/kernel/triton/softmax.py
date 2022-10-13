@@ -27,10 +27,10 @@ def _softmax_core(input_ptrs, output_ptrs, mask_ptrs, bias_ptrs, col_offsets, n_
 
 
 @triton.jit
-def _softmax_grad_core(output_ptrs, d_output_ptrs, d_input_ptrs, mask_ptrs, col_offsets, n_cols,
-                       is_bf16: tl.constexpr, use_mask: tl.constexpr):
-    output_row = tl.load(output_ptrs, mask=col_offsets < n_cols, other=float("-inf"))
-    d_output_row = tl.load(d_output_ptrs, mask=col_offsets < n_cols, other=float("-inf"))
+def _softmax_grad_core(output_ptrs, d_output_ptrs, d_input_ptrs, col_offsets, n_cols,
+                       is_bf16: tl.constexpr):
+    output_row = tl.load(output_ptrs, mask=col_offsets < n_cols, other=float(0))
+    d_output_row = tl.load(d_output_ptrs, mask=col_offsets < n_cols, other=float(0))
 
     if is_bf16:
         output_row = output_row.to(tl.float32)
@@ -38,10 +38,6 @@ def _softmax_grad_core(output_ptrs, d_output_ptrs, d_input_ptrs, mask_ptrs, col_
 
     row_sum = tl.sum(output_row * d_output_row, axis=0)
     d_softmax_output = (d_output_row - row_sum) * output_row
-
-    if use_mask:
-        mask = tl.load(mask_ptrs, mask=col_offsets < n_cols, other=float("-inf")).to(tl.float32)
-        d_softmax_output = tl.where(mask == 0, float(0), d_softmax_output)
 
     tl.store(d_input_ptrs, d_softmax_output, mask=col_offsets < n_cols)
 
@@ -114,10 +110,9 @@ def softmax_mask_bias_kernel_two_rows(output_ptr, input_ptr, mask_ptr, bias_ptr,
 
 
 @triton.jit
-def softmax_mask_grad_kernel(d_output_ptr, output_ptr, d_input_ptr, mask_ptr, d_output_row_stride,
-                             output_row_stride, d_input_row_stride, n_cols, n_heads,
-                             BLOCK_SIZE: tl.constexpr, is_bf16: tl.constexpr,
-                             use_mask: tl.constexpr):
+def softmax_grad_kernel(d_output_ptr, output_ptr, d_input_ptr, d_output_row_stride,
+                        output_row_stride, d_input_row_stride, n_cols, BLOCK_SIZE: tl.constexpr,
+                        is_bf16: tl.constexpr):
 
     row_idx = tl.program_id(0).to(tl.int64)
     col_offsets = tl.arange(0, BLOCK_SIZE)
@@ -130,20 +125,13 @@ def softmax_mask_grad_kernel(d_output_ptr, output_ptr, d_input_ptr, mask_ptr, d_
     d_output_ptrs = d_output_row_ptr + col_offsets
     d_input_ptrs = d_input_row_ptr + col_offsets
 
-    mask_ptrs = output_ptrs  # place holder, not use if use_mask == False
-    if use_mask:
-        mask_row_ptr = mask_ptr + (row_idx // (n_heads * n_cols)) * n_cols
-        mask_ptrs = mask_row_ptr + col_offsets
-
-    _softmax_grad_core(output_ptrs, d_output_ptrs, d_input_ptrs, mask_ptrs, col_offsets, n_cols,
-                       is_bf16, use_mask)
+    _softmax_grad_core(output_ptrs, d_output_ptrs, d_input_ptrs, col_offsets, n_cols, is_bf16)
 
 
 @triton.jit
-def softmax_mask_grad_kernel_two_rows(d_output_ptr, output_ptr, d_input_ptr, mask_ptr,
-                                      d_output_row_stride, output_row_stride, d_input_row_stride,
-                                      n_cols, n_heads, BLOCK_SIZE: tl.constexpr,
-                                      is_bf16: tl.constexpr, use_mask: tl.constexpr):
+def softmax_grad_kernel_two_rows(d_output_ptr, output_ptr, d_input_ptr, d_output_row_stride,
+                                      output_row_stride, d_input_row_stride, n_cols,
+                                      BLOCK_SIZE: tl.constexpr, is_bf16: tl.constexpr):
 
     row_idx = tl.program_id(0).to(tl.int64)
     col_offsets = tl.arange(0, BLOCK_SIZE)
@@ -156,21 +144,10 @@ def softmax_mask_grad_kernel_two_rows(d_output_ptr, output_ptr, d_input_ptr, mas
     d_output_ptrs = d_output_row_ptr + col_offsets
     d_input_ptrs = d_input_row_ptr + col_offsets
 
-    mask_ptrs = output_ptrs  # place holder, not use if use_mask == False
-    if use_mask:
-        mask_row_ptr = mask_ptr + ((2 * row_idx) // (n_heads * n_cols)) * n_cols
-        mask_ptrs = mask_row_ptr + col_offsets
-
-    _softmax_grad_core(output_ptrs, d_output_ptrs, d_input_ptrs, mask_ptrs, col_offsets, n_cols,
-                       is_bf16, use_mask)
-
-    mask_ptrs = output_ptrs  # place holder, not use if use_mask == False
-    if use_mask:
-        mask_row_ptr = mask_ptr + ((2 * row_idx + 1) // (n_heads * n_cols)) * n_cols
-        mask_ptrs = mask_row_ptr + col_offsets
+    _softmax_grad_core(output_ptrs, d_output_ptrs, d_input_ptrs, col_offsets, n_cols, is_bf16)
 
     _softmax_grad_core(output_ptrs + n_cols, d_output_ptrs + n_cols, d_input_ptrs + n_cols,
-                       mask_ptrs, col_offsets, n_cols, is_bf16, use_mask)
+                       col_offsets, n_cols, is_bf16)
 
 
 def softmax_triton_kernel_wrapper(x, mask, bias, n_rows, n_cols):
@@ -209,9 +186,8 @@ def softmax_triton_kernel_wrapper(x, mask, bias, n_rows, n_cols):
     return y
 
 
-def softmax_grad_triton_kernel_wrapper(grad_output, output, mask, n_rows, n_cols):
+def softmax_grad_triton_kernel_wrapper(grad_output, output, n_rows, n_cols):
     grad_input = torch.empty_like(grad_output)
-    n_heads = output.shape[2]
 
     num_warps = 1
     BLOCK_SIZE = triton.next_power_of_2(n_cols)
@@ -223,25 +199,22 @@ def softmax_grad_triton_kernel_wrapper(grad_output, output, mask, n_rows, n_cols
         num_warps = 16
     is_bf16 = (output.dtype == torch.bfloat16)
 
-    _dispatch_kernel = softmax_mask_grad_kernel
+    _dispatch_kernel = softmax_grad_kernel
     _grid = (n_rows,)
     if n_cols <= 128 and n_rows % 2 == 0:
-        _dispatch_kernel = softmax_mask_grad_kernel_two_rows
+        _dispatch_kernel = softmax_grad_kernel_two_rows
         _grid = (n_rows // 2,)
 
     _dispatch_kernel[_grid](
         grad_output,
         output,
         grad_input,
-        mask,
         grad_output.stride(-2),
         output.stride(-2),
         grad_output.stride(-2),
         n_cols,
-        n_heads,
         num_warps=num_warps,
         BLOCK_SIZE=BLOCK_SIZE,
         is_bf16=is_bf16,
-        use_mask=(mask != None),
     )
     return grad_input

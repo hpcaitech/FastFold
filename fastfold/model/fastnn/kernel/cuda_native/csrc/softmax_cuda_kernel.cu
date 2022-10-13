@@ -266,8 +266,8 @@ __global__ void fastfold_softmax_grad(T *d_output, T *output, T *d_input, long l
         cols_this_thread = 0;
     }
 
-    float y_buf[8];
-    float dy_buf[8];
+    float y_buf[32];
+    float dy_buf[32];
 
     int lane_id = threadidx_y;
 
@@ -280,23 +280,29 @@ __global__ void fastfold_softmax_grad(T *d_output, T *output, T *d_input, long l
 
 #pragma unroll
         for (int i = 0; i < cols_this_thread; i++) {
-            y_buf[i] = static_cast<T>(row_output[lane_id * cols_per_thread + i]);
-            dy_buf[i] = static_cast<T>(row_d_output[lane_id * cols_per_thread + i]);
+            if (lane_id * cols_per_thread + i < cols) {
+                y_buf[i] = static_cast<T>(row_output[lane_id * cols_per_thread + i]);
+                dy_buf[i] = static_cast<T>(row_d_output[lane_id * cols_per_thread + i]);
+            }
         }
 
         float thread_sum = 0.f;
 
 #pragma unroll
         for (int i = 0; i < cols_this_thread; i++) {
-            thread_sum += y_buf[i] * dy_buf[i];
+            if (lane_id * cols_per_thread + i < cols) {
+                thread_sum += y_buf[i] * dy_buf[i];
+            }
         }
 
         float warp_sum = WarpAllReduceSum(thread_sum);
 
 #pragma unroll
         for (int i = 0; i < cols_this_thread; ++i) {
-            row_d_input[lane_id * cols_per_thread + i] =
-                static_cast<T>((dy_buf[i] - warp_sum) * y_buf[i]);
+            if (lane_id * cols_per_thread + i < cols) {
+                row_d_input[lane_id * cols_per_thread + i] =
+                    static_cast<T>((dy_buf[i] - warp_sum) * y_buf[i]);
+            }
         }
     }
 }
@@ -346,10 +352,14 @@ __global__ void fastfold_softmax_mask(T *input, T *mask, T *output, long long ro
 
 #pragma unroll
     for (int i = 0; i < cols_per_thread; i++) {
-        if (mask_ptr[lane_id * cols_per_thread + i] == 0) {
-            buf[i] = -1 * 1e9;
+        if (lane_id * cols_per_thread + i < cols) {
+            if (mask_ptr[lane_id * cols_per_thread + i] == 0) {
+                buf[i] = -1 * 1e9;
+            } else {
+                buf[i] = static_cast<T>(row_input[lane_id * cols_per_thread + i]);
+            }
         } else {
-            buf[i] = static_cast<T>(row_input[lane_id * cols_per_thread + i]);
+            buf[i] = -1 * CUDART_INF_F;
         }
     }
 
@@ -371,7 +381,9 @@ __global__ void fastfold_softmax_mask(T *input, T *mask, T *output, long long ro
     float warp_sum = WarpAllReduceSum(thread_sum);
 #pragma unroll
     for (int i = 0; i < cols_per_thread; ++i) {
-        row_output[lane_id * cols_per_thread + i] = static_cast<T>(__fdividef(buf[i], warp_sum));
+        if (lane_id * cols_per_thread + i < cols) {
+            row_output[lane_id * cols_per_thread + i] = static_cast<T>(__fdividef(buf[i], warp_sum));
+        }
     }
 }
 
@@ -526,8 +538,8 @@ __global__ void fastfold_softmax_mask_grad(T *d_output, T *output, T *d_input, T
         cols_this_thread = 0;
     }
 
-    float y_buf[8];
-    float dy_buf[8];
+    float y_buf[32];
+    float dy_buf[32];
 
     int lane_id = threadidx_y;
 
@@ -541,26 +553,32 @@ __global__ void fastfold_softmax_mask_grad(T *d_output, T *output, T *d_input, T
 
 #pragma unroll
         for (int i = 0; i < cols_this_thread; i++) {
-            y_buf[i] = static_cast<T>(row_output[lane_id * cols_per_thread + i]);
-            dy_buf[i] = static_cast<T>(row_d_output[lane_id * cols_per_thread + i]);
+            if (lane_id * cols_per_thread + i < cols) {
+                y_buf[i] = static_cast<T>(row_output[lane_id * cols_per_thread + i]);
+                dy_buf[i] = static_cast<T>(row_d_output[lane_id * cols_per_thread + i]);
+            }
         }
 
         float thread_sum = 0.f;
 
 #pragma unroll
         for (int i = 0; i < cols_this_thread; i++) {
-            thread_sum += y_buf[i] * dy_buf[i];
+            if (lane_id * cols_per_thread + i < cols) {
+                thread_sum += y_buf[i] * dy_buf[i];
+            }
         }
 
         float warp_sum = WarpAllReduceSum(thread_sum);
 
 #pragma unroll
         for (int i = 0; i < cols_this_thread; ++i) {
-            if (mask_ptr[lane_id * cols_per_thread + i] != 0) {
-                row_d_input[lane_id * cols_per_thread + i] =
-                    static_cast<T>((dy_buf[i] - warp_sum) * y_buf[i]);
-            } else {
-                row_d_input[lane_id * cols_per_thread + i] = 0;
+            if (lane_id * cols_per_thread + i < cols) {
+                if (mask_ptr[lane_id * cols_per_thread + i] != 0) {
+                    row_d_input[lane_id * cols_per_thread + i] =
+                        static_cast<T>((dy_buf[i] - warp_sum) * y_buf[i]);
+                } else {
+                    row_d_input[lane_id * cols_per_thread + i] = 0;
+                }
             }
         }
     }
@@ -615,11 +633,15 @@ __global__ void fastfold_softmax_mask_bias(T *input, T *mask, T *bias, T *output
 
 #pragma unroll
     for (int i = 0; i < cols_per_thread; i++) {
-        if (mask_ptr[lane_id * cols_per_thread + i] == 0) {
-            buf[i] = -1 * 10e9;
+        if (lane_id * cols_per_thread + i < cols) {
+            if (mask_ptr[lane_id * cols_per_thread + i] == 0) {
+                buf[i] = -1 * 10e9;
+            } else {
+                buf[i] = static_cast<T>(row_input[lane_id * cols_per_thread + i]) +
+                        static_cast<T>(bias_ptr[lane_id * cols_per_thread + i]);
+            }
         } else {
-            buf[i] = static_cast<T>(row_input[lane_id * cols_per_thread + i]) +
-                     static_cast<T>(bias_ptr[lane_id * cols_per_thread + i]);
+            buf[i] = -1 * CUDART_INF_F;
         }
     }
 
@@ -641,7 +663,9 @@ __global__ void fastfold_softmax_mask_bias(T *input, T *mask, T *bias, T *output
     float warp_sum = WarpAllReduceSum(thread_sum);
 #pragma unroll
     for (int i = 0; i < cols_per_thread; ++i) {
-        row_output[lane_id * cols_per_thread + i] = static_cast<T>(__fdividef(buf[i], warp_sum));
+        if (lane_id * cols_per_thread + i < cols) {
+            row_output[lane_id * cols_per_thread + i] = static_cast<T>(__fdividef(buf[i], warp_sum));
+        }
     }
 }
 
