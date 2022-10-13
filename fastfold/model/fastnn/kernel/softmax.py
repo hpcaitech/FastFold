@@ -45,8 +45,7 @@ class FusedSoftmaxFunc(torch.autograd.Function):
         grad_output = grad_output.contiguous()
         output, mask_ = ctx.saved_tensors
         if _triton_available:
-            grad_input = softmax_grad_triton_kernel_wrapper(grad_output, output, mask_, ctx.rows,
-                                                            ctx.cols)
+            grad_input = softmax_grad_triton_kernel_wrapper(grad_output, output, ctx.rows, ctx.cols)
         else:
             grad_input = softmax_grad_cuda_kernel_wrapper(grad_output, output, mask_, ctx.rows,
                                                           ctx.cols)
