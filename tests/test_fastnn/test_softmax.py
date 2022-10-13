@@ -1,9 +1,10 @@
 import torch
 
 from fastfold.model.fastnn.kernel import fused_softmax
+from fastfold.model.fastnn.kernel import softmax
 
 
-def test_softmax():
+def _test_softmax_core():
 
     batch_, chunk_, head_ = 1, 8, 4
     test_seq_ = [31, 32, 128, 129, 256, 259, 512, 700, 1024]
@@ -51,6 +52,12 @@ def test_softmax():
             assert grad_bias_error < tolerance_eps[
                 dtype], f"fastnn bwd kernel error when {seq_} {dtype}"
 
+
+def test_softmax():
+    _test_softmax_core()
+    if softmax._triton_available:
+        softmax._triton_available = False
+        _test_softmax_core()
 
 if __name__ == "__main__":
     test_softmax()
