@@ -15,7 +15,7 @@ jobs:
     runs-on: [self-hosted, gpu]
     container:
       image: hpcaitech/colossalai:0.1.9
-      options: --gpus all --rm
+      options: --gpus all --rm -v /data/scratch/fastfold:/data/scratch/fastfold
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v2

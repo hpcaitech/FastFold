@@ -38,7 +38,7 @@ def inference(chunk_size, inplace):
     config.globals.chunk_size = chunk_size
     config.globals.inplace = False
     model = AlphaFold(config)
-    import_jax_weights_(model, '/data/scratch/alphafold/alphafold/params/params_model_1.npz')
+    import_jax_weights_(model, '/data/scratch/fastfold/weight.npz')
     model.eval()
     model.cuda()
 
@@ -48,7 +48,7 @@ def inference(chunk_size, inplace):
     fastmodel.cuda()
 
     set_chunk_size(model.globals.chunk_size)
-    batch = pickle.load(open('/home/lclgy/mono_batch.pkl', 'rb'))
+    batch = pickle.load(open('/data/scratch/fastfold/mono_batch.pkl', 'rb'))
     batch = {k: torch.as_tensor(v).cuda() for k, v in batch.items()}
     fastbatch = copy.deepcopy(batch)
 
