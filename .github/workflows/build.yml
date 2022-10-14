@@ -1,0 +1,32 @@
+name: Build
+
+on: 
+  pull_request:
+    types: [synchronize, labeled]
+
+jobs:
+  build:
+    name: Build and Test FastFold
+    if: |
+        github.event.pull_request.draft == false &&
+        github.base_ref == 'main' || 'CI' &&
+        github.event.pull_request.base.repo.full_name == 'hpcaitech/FastFold' &&
+        contains( github.event.pull_request.labels.*.name, 'Run Build and Test')
+    runs-on: [self-hosted, gpu]
+    container:
+      image: hpcaitech/colossalai:0.1.9
+      options: --gpus all --rm -v /data/scratch/fastfold:/data/scratch/fastfold
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          repository: hpcaitech/FastFold
+          ssh-key: ${{ secrets.SSH_KEY_FOR_CI }}
+      - name: Install FastFold
+        run: |
+          conda install openmm=7.7.0 pdbfixer -c conda-forge -y
+          pip install biopython==1.79 dm-tree==0.1.6 ml-collections==0.1.0 scipy==1.7.1 pandas pytest
+          pip install -e .
+      - name: Unit Testing
+        run: |
+          PYTHONPATH=$PWD pytest tests

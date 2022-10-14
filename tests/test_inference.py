@@ -1,83 +1,61 @@
-# Copyright 2021 AlQuraishi Laboratory
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-import time
+import os
+import copy
+import pytest
 import torch
-import ml_collections as mlc
+import pickle
+import torch.multiprocessing as mp
+from functools import partial
 
 import fastfold
 from fastfold.model.hub import AlphaFold
 from fastfold.config import model_config
 from fastfold.model.fastnn import set_chunk_size
 from fastfold.utils import inject_fastnn
-from test_data_utils import random_extra_msa_feats, random_template_feats
-from fastfold.data import data_transforms
-from fastfold.utils.tensor_utils import tensor_tree_map
+from fastfold.utils.import_weights import import_jax_weights_
 
 
-consts = mlc.ConfigDict(
-    {
-        "n_res": 11,
-        "n_seq": 13,
-        "n_templ": 3,
-        "n_extra": 17,
-    }
-)
+@pytest.mark.parametrize('world_size', [1, 2])
+@pytest.mark.parametrize('chunk_size', [None, 2])
+@pytest.mark.parametrize('inplace', [False, True])
+def test_state_dict(world_size, chunk_size, inplace):
+    run_func = partial(run_dist, world_size=world_size, chunk_size=chunk_size, inplace=inplace)
+    mp.spawn(run_func, nprocs=world_size)
 
-def inference():
+
+def run_dist(rank, world_size, chunk_size, inplace):
+    os.environ['RANK'] = str(rank)
+    os.environ['LOCAL_RANK'] = str(rank)
+    os.environ['WORLD_SIZE'] = str(world_size)
+    # init distributed for Dynamic Axial Parallelism
     fastfold.distributed.init_dap()
+    inference(chunk_size, inplace)
+    
 
-    n_seq = consts.n_seq
-    n_templ = consts.n_templ
-    n_res = consts.n_res
-    n_extra_seq = consts.n_extra
 
+def inference(chunk_size, inplace):
 
     config = model_config('model_1')
+    config.globals.chunk_size = chunk_size
+    config.globals.inplace = False
     model = AlphaFold(config)
-    model = inject_fastnn(model)
+    import_jax_weights_(model, '/data/scratch/fastfold/weight.npz')
     model.eval()
     model.cuda()
 
+    fastmodel = copy.deepcopy(model)
+    fastmodel = inject_fastnn(fastmodel)
+    fastmodel.eval()
+    fastmodel.cuda()
+
     set_chunk_size(model.globals.chunk_size)
-
-    batch = {}
-    tf = torch.randint(config.model.input_embedder.tf_dim - 1, size=(n_res,))
-    batch["target_feat"] = torch.nn.functional.one_hot(
-        tf, config.model.input_embedder.tf_dim).float()
-    batch["aatype"] = torch.argmax(batch["target_feat"], dim=-1)
-    batch["residue_index"] = torch.arange(n_res)
-    batch["msa_feat"] = torch.rand((n_seq, n_res, config.model.input_embedder.msa_dim))
-    t_feats = random_template_feats(n_templ, n_res)
-    batch.update({k: torch.tensor(v) for k, v in t_feats.items()})
-    extra_feats = random_extra_msa_feats(n_extra_seq, n_res)
-    batch.update({k: torch.tensor(v) for k, v in extra_feats.items()})
-    batch["msa_mask"] = torch.randint(low=0, high=2, size=(n_seq, n_res)).float()
-    batch["seq_mask"] = torch.randint(low=0, high=2, size=(n_res,)).float()
-    batch.update(data_transforms.make_atom14_masks(batch))
-    batch["no_recycling_iters"] = torch.tensor(2.)
-    add_recycling_dims = lambda t: (
-            t.unsqueeze(-1).expand(*t.shape, config.data.common.max_recycling_iters))
-    batch = tensor_tree_map(add_recycling_dims, batch)
-
+    batch = pickle.load(open('/data/scratch/fastfold/mono_batch.pkl', 'rb'))
+    batch = {k: torch.as_tensor(v).cuda() for k, v in batch.items()}
+    fastbatch = copy.deepcopy(batch)
 
     with torch.no_grad():
-        batch = {k: torch.as_tensor(v).cuda() for k, v in batch.items()}
-        t = time.perf_counter()
         out = model(batch)
-        print(f"Inference time: {time.perf_counter() - t}")
+        config.globals.inplace = inplace
+        fastout = fastmodel(fastbatch)
 
-if __name__ == "__main__":
-    inference()
-    print("Inference Test Passed!")
+    pos_dif = torch.max(torch.abs(fastout["final_atom_positions"] - out["final_atom_positions"]))
+    assert pos_dif < 1.1, f"Test failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {pos_dif}"
