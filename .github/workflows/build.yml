@@ -29,4 +29,8 @@ jobs:
           pip install -e .
       - name: Unit Testing
         run: |
-          PYTHONPATH=$PWD pytest tests
+          PYTHONPATH=$PWD pytest test
+        env:
+          NCCL_SHM_DISABLE: 1
+
+
