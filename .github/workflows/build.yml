@@ -14,7 +14,7 @@ jobs:
         contains( github.event.pull_request.labels.*.name, 'Run Build and Test')
     runs-on: [self-hosted, gpu]
     container:
-      image: hpcaitech/colossalai:0.1.9
+      image: hpcaitech/colossalai:0.1.8
       options: --gpus all --rm -v /data/scratch/fastfold:/data/scratch/fastfold
     timeout-minutes: 40
     steps:
