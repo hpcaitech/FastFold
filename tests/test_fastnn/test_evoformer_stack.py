@@ -51,12 +51,12 @@ def _test_evoformer_stack(rank, world_size, chunk_size, inplace):
     z = torch.randn((seq_len, seq_len, 128)).cuda()
     z_mask = torch.ones((seq_len, seq_len)).cuda().to(dtype=z.dtype)
 
-    m_out, z_out, s_out = target_module(
-        m, z, m_mask, z_mask, chunk_size=chunk_size, _mask_trans=config.model._mask_trans)
     
-    if chunk_size:
-        set_chunk_size(chunk_size)
     with torch.no_grad():
+        m_out, z_out, s_out = target_module(
+        m, z, m_mask, z_mask, chunk_size=chunk_size, _mask_trans=config.model._mask_trans)
+
+        set_chunk_size(chunk_size)
         if inplace:
             m_fast, z_fast, s_fast = fast_module(
                 m, z, m_mask, z_mask, chunk_size=chunk_size, _mask_trans=config.model._mask_trans)
