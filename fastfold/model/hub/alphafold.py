@@ -36,9 +36,6 @@ from fastfold.model.nn.evoformer import EvoformerStack, ExtraMSAStack
 from fastfold.model.nn.heads import AuxiliaryHeads
 import fastfold.common.residue_constants as residue_constants
 from fastfold.model.nn.structure_module import StructureModule
-from fastfold.model.loss import (
-    compute_plddt,
-)
 from fastfold.utils.tensor_utils import (
     dict_multimap,
     tensor_tree_map,

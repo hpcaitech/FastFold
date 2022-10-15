@@ -13,11 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import torch
-import torch.nn as nn
-import fastfold
-from fastfold.distributed.comm import copy
 
-from fastfold.model.fastnn import Evoformer, EvoformerStack, ExtraMSAStack
+from fastfold.model.fastnn import EvoformerStack, ExtraMSAStack
 from fastfold.model.fastnn.embedders import TemplateEmbedder
 
 def copy_layernorm(model_fast, model_ori):
