@@ -12,8 +12,7 @@ from fastfold.utils.inject_fastnn import inject_fastnn
 from fastfold.utils.import_weights import import_jax_weights_
 from colossalai.context.parallel_mode import ParallelMode
 from colossalai.core import global_context as gpc
-
-from fastfold.distributed.comm import gather, scatter
+from fastfold.distributed.comm import gather, scatter, row_to_col
 
 
 @pytest.mark.parametrize('world_size', [1, 2])
@@ -39,38 +38,32 @@ def _test_evoformer_stack(rank, world_size, chunk_size):
     fast_module = deepcopy(target_module)
     fast_module = inject_fastnn(fast_module)
 
-    target_module1 = target_module.evoformer.blocks[0].msa_att_row.eval().cuda()
-    target_module2 = target_module.evoformer.blocks[0].msa_dropout_layer.eval().cuda()
-    
-    fast_module = fast_module.evoformer.blocks[0].msa.MSARowAttentionWithPairBias.eval().cuda()
+    target_module = target_module.evoformer.blocks[0].msa_att_col.eval().cuda()
+    fast_module = fast_module.evoformer.blocks[0].msa.MSAColumnAttention.eval().cuda()
 
     msa_len = 122
     seq_len = 68
     m = torch.randn((msa_len, seq_len, 256)).cuda()
     m_mask = torch.ones((msa_len, seq_len)).cuda().to(dtype=m.dtype)
-    z = torch.randn((seq_len, seq_len, 128)).cuda()
-    z_mask = torch.ones((seq_len, seq_len)).cuda().to(dtype=z.dtype)
     
     fast_m = deepcopy(m).unsqueeze(0)
-    fast_z = deepcopy(z).unsqueeze(0)
     dap_size = gpc.get_world_size(ParallelMode.TENSOR)
-    seq_length = z_mask.size(-1)
+    seq_length = m_mask.size(-1)
     padding_size = (int(seq_length / dap_size) + 1) * dap_size - seq_length
     fast_m = torch.nn.functional.pad(fast_m, (0, 0, 0, padding_size))
-    fast_z = torch.nn.functional.pad(fast_z, (0, 0, 0, padding_size, 0, padding_size))
     fast_m = scatter(fast_m, dim=1)
-    fast_z = scatter(fast_z, dim=1)
     fast_m_mask = deepcopy(m_mask).unsqueeze(0)
     fast_m_mask = torch.nn.functional.pad(fast_m_mask, (0, padding_size))
 
     with torch.no_grad():
-        m_out = m + target_module2(target_module1(m, z=z, mask=m_mask, chunk_size=chunk_size))
+        m_out = m + target_module(m, mask=m_mask, chunk_size=chunk_size)
 
         set_chunk_size(chunk_size)
-        fast_m_mask = scatter(fast_m_mask, dim=1)
-        m_fast = fast_module(fast_m, fast_z, fast_m_mask)
+        fast_m = row_to_col(fast_m)
+        fast_m_mask = scatter(fast_m_mask, dim=2)
+        m_fast = fast_module(fast_m, fast_m_mask)
         m_fast = m_fast.squeeze(0)
-        m_fast = gather(m_fast, dim=0)
+        m_fast = gather(m_fast, dim=1)
         m_fast = m_fast[:, :-padding_size, :]
 
     error = torch.max(torch.abs(m_out - m_fast))
