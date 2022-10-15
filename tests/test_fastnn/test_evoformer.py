@@ -1,15 +1,15 @@
 import torch
 import pytest
 import os
+import copy
 import torch.multiprocessing as mp
 from functools import partial
 import fastfold
-from torch import nn
 from fastfold.config import model_config
-from fastfold.model.nn.evoformer import EvoformerBlock as TargetEvoformer
-from fastfold.model.fastnn.evoformer import Evoformer as FastEvoformer
-from fastfold.utils.inject_fastnn import copy_evoformer_para
 from fastfold.model.fastnn.ops import set_chunk_size
+from fastfold.model.hub import AlphaFold
+from fastfold.utils.inject_fastnn import inject_fastnn
+from fastfold.utils.import_weights import import_jax_weights_
 
 
 @pytest.mark.parametrize('world_size', [1, 2])
@@ -27,59 +27,34 @@ def _test_evoformer(rank, world_size, chunk_size, inplace):
     # init distributed for Dynamic Axial Parallelism
     fastfold.distributed.init_dap()
     
-    config = model_config('model_1').model["evoformer_stack"]
-    with torch.no_grad():
-        target_module = TargetEvoformer(
-            c_m=config["c_m"],
-            c_z=config["c_z"],
-            c_hidden_msa_att=config["c_hidden_msa_att"],
-            c_hidden_opm=config["c_hidden_opm"],
-            c_hidden_mul=config["c_hidden_mul"],
-            c_hidden_pair_att=config["c_hidden_pair_att"],
-            no_heads_msa=config["no_heads_msa"],
-            no_heads_pair=config["no_heads_pair"],
-            transition_n=config["transition_n"],
-            msa_dropout=config["msa_dropout"],
-            pair_dropout=config["pair_dropout"],
-            inf=config["inf"],
-            eps=config["eps"],
-            is_multimer=False,
-        )
-        fast_module_1 = FastEvoformer(
-            c_m=config["c_m"],
-            c_z=config["c_z"],
-            first_block=True,
-            last_block=False,
-            is_multimer=False,
-        )
-        fast_module_2 = FastEvoformer(
-            c_m=config["c_m"],
-            c_z=config["c_z"],
-            first_block=False,
-            last_block=True,
-            is_multimer=False,
-        )
-        copy_evoformer_para(fast_module_1, target_module)
-        copy_evoformer_para(fast_module_2, target_module)
+    config = model_config('model_1')
+    config.globals.chunk_size = chunk_size
+    config.globals.inplace = False
+    target_module = AlphaFold(config)
+    import_jax_weights_(target_module, '/data/scratch/alphafold/alphafold/params/params_model_1.npz')
 
-    target_module = target_module.eval().cuda()
-    fast_module_1 = fast_module_1.eval().cuda()
-    fast_module_2 = fast_module_2.eval().cuda()
+    fast_module = copy.deepcopy(target_module)
+    fast_module = inject_fastnn(fast_module)
+
+    target_module = target_module.evoformer
+    fast_module = fast_module.evoformer
+
+    target_module1 = target_module.blocks[0].eval().cuda()
+    target_module2 = target_module.blocks[-1].eval().cuda()
+    fast_module_1 = fast_module.blocks[0].eval().cuda()
+    fast_module_2 = fast_module.blocks[-1].eval().cuda()
 
     msa_len = 88
-    seq_len = 378
-    m = torch.randn((msa_len, seq_len, config["c_m"])).cuda()
+    seq_len = 124
+    m = torch.randn((msa_len, seq_len, 256)).cuda()
     m_mask = torch.ones((msa_len, seq_len)).cuda()
-    m_mask[:, :-5] = 0
-    z = torch.randn((seq_len, seq_len, config["c_z"])).cuda()
+    z = torch.randn((seq_len, seq_len, 128)).cuda()
     z_mask = torch.ones((seq_len, seq_len)).cuda()
-    z_mask[:, :-5] = 0
 
-    m_out, z_out = target_module(m, z, m_mask, z_mask)
-    m_out, z_out = target_module(m_out, z_out, m_mask, z_mask)
-    
-    if chunk_size:
-        set_chunk_size(chunk_size)
+    m_out, z_out = target_module1(m, z, m_mask, z_mask)
+    m_out, z_out = target_module2(m_out, z_out, m_mask, z_mask)
+
+    set_chunk_size(chunk_size)
     with torch.no_grad():
         if inplace:
             m_fast, z_fast = fast_module_1(m, z, m_mask, z_mask)
@@ -89,5 +64,8 @@ def _test_evoformer(rank, world_size, chunk_size, inplace):
             m_fast, z_fast = fast_module_2.inplace(m_fast, z_fast, m_mask, z_mask)
             m_fast = m_fast[0]
             z_fast = z_fast[0]
-    assert torch.allclose(m_out, m_fast, atol=1e-8)
-    assert torch.allclose(z_out, z_fast, atol=1e-8)
+
+    error = torch.mean(torch.abs(m_out - m_fast))
+    assert error < 1e-4, f"Test m failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {error}"
+    error = torch.mean(torch.abs(z_out - z_fast))
+    assert error < 1e-4, f"Test z failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {error}"
