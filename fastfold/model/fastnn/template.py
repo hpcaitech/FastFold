@@ -18,14 +18,16 @@ from typing import Optional, List
 import torch
 import torch.nn as nn
 
+from colossalai.context.parallel_mode import ParallelMode
+from colossalai.core import global_context as gpc
+
 from fastfold.model.nn.primitives import Attention
-from fastfold.model.fastnn.ops import LayerNorm
-from fastfold.model.fastnn import TemplatePairStackBlock
 from fastfold.utils.checkpointing import checkpoint_blocks
-from fastfold.utils.tensor_utils import (
-    chunk_layer,
-    permute_final_dims,
-)
+from fastfold.utils.tensor_utils import chunk_layer, permute_final_dims
+from fastfold.model.fastnn.ops import (ChunkTransition, LayerNorm,
+                                       ChunkTriangleAttentionStartingNode, ChunkTriangleAttentionEndingNode, 
+                                       AsyncChunkTriangleMultiplicationOutgoing, AsyncChunkTriangleMultiplicationIncoming)
+from fastfold.distributed.comm import gather, scatter, col_to_row, row_to_col, scatter
 
 
 class TemplatePointwiseAttention(nn.Module):
@@ -134,6 +136,140 @@ class TemplatePointwiseAttention(nn.Module):
         return z
 
 
+class TemplatePairBlock(nn.Module):
+    def __init__(
+        self,
+        c_t: int,
+        c_hidden_tri_att: int,
+        c_hidden_tri_mul: int,
+        no_heads: int,
+        pair_transition_n: int,
+        dropout_rate: float,
+        inf: float,
+        first_block: bool,
+        last_block: bool,
+        **kwargs,
+    ):
+        super(TemplatePairBlock, self).__init__()
+
+        self.first_block = first_block
+        self.last_block = last_block
+
+        self.c_t = c_t
+        self.c_hidden_tri_att = c_hidden_tri_att
+        self.c_hidden_tri_mul = c_hidden_tri_mul
+        self.n_head = no_heads
+        self.p_drop = dropout_rate
+        self.hidden_c = int(c_t / self.n_head)
+
+        self.TriangleMultiplicationOutgoing = AsyncChunkTriangleMultiplicationOutgoing(
+            self.c_t, p_drop=self.p_drop, c=self.c_hidden_tri_mul
+        )
+        self.TriangleMultiplicationIncoming = AsyncChunkTriangleMultiplicationIncoming(
+            self.c_t, p_drop=self.p_drop, c=self.c_hidden_tri_mul
+        )
+        self.TriangleAttentionStartingNode = ChunkTriangleAttentionStartingNode(
+            self.c_t, p_drop=self.p_drop, c=self.c_hidden_tri_att, n_head=self.n_head
+        )
+        self.TriangleAttentionEndingNode = ChunkTriangleAttentionEndingNode(
+            self.c_t, p_drop=self.p_drop, c=self.c_hidden_tri_att, n_head=self.n_head
+        )
+        self.PairTransition = ChunkTransition(d=self.c_t, n=pair_transition_n)
+
+    def forward(
+        self,
+        z: torch.Tensor,
+        mask: torch.Tensor,
+        chunk_size: Optional[int] = None,
+        _mask_trans: bool = True,
+    ):
+
+        dap_size = gpc.get_world_size(ParallelMode.TENSOR)
+
+        seq_length = mask.size(-1)
+        padding_size = (int(seq_length / dap_size) + 1) * dap_size - seq_length
+
+        if self.first_block:
+            z = torch.nn.functional.pad(z, (0, 0, 0, padding_size, 0, padding_size))
+            z = scatter(z, dim=1)
+
+        mask = torch.nn.functional.pad(mask, (0, padding_size, 0, padding_size))
+
+        # single_templates = [t.unsqueeze(-4) for t in torch.unbind(z, dim=-4)]
+        # single_templates_masks = [m.unsqueeze(-3) for m in torch.unbind(mask, dim=-3)]
+        for i in range(z.shape[0]):
+            single = z[i].unsqueeze(-4)
+            single_mask = mask[i].unsqueeze(-3)
+
+            single_mask_row = scatter(single_mask, dim=1)
+            single_mask_col = scatter(single_mask, dim=2)
+
+            single = self.TriangleMultiplicationOutgoing(single, single_mask_row)
+            single = row_to_col(single)
+            single = self.TriangleMultiplicationIncoming(single, single_mask_col)
+            single = col_to_row(single)
+            single = self.TriangleAttentionStartingNode(single, single_mask_row)
+            single = row_to_col(single)
+            single = self.TriangleAttentionEndingNode(single, single_mask_col)
+            single = self.PairTransition(single)
+            single = col_to_row(single)
+            z[i] = single
+
+        # z = torch.cat(single_templates, dim=-4)
+        if self.last_block:
+            z = gather(z, dim=1)
+            z = z[:, :-padding_size, :-padding_size, :]
+
+        return z
+    
+    def inplace(
+        self,
+        z: torch.Tensor,
+        mask: torch.Tensor,
+        chunk_size: Optional[int] = None,
+        _mask_trans: bool = True,
+    ):
+        if isinstance(chunk_size, int) and 1 <= chunk_size <= 4:
+            z[0] = z[0].cpu()
+        dap_size = gpc.get_world_size(ParallelMode.TENSOR)
+
+        seq_length = mask.size(-1)
+        padding_size = (int(seq_length / dap_size) + 1) * dap_size - seq_length
+
+        if self.first_block:
+            z[0] = torch.nn.functional.pad(z[0], (0, 0, 0, padding_size, 0, padding_size))
+            z[0] = scatter(z[0], dim=1)
+
+        mask = torch.nn.functional.pad(mask, (0, padding_size, 0, padding_size))
+
+        # single_templates = [t.unsqueeze(-4) for t in torch.unbind(z, dim=-4)]
+        # single_templates_masks = [m.unsqueeze(-3) for m in torch.unbind(mask, dim=-3)]
+        for i in range(z[0].shape[0]):
+            single = z[0][i].unsqueeze(-4).to(mask.device)
+            single_mask = mask[i].unsqueeze(-3)
+
+            single_mask_row = scatter(single_mask, dim=1)
+            single_mask_col = scatter(single_mask, dim=2)
+
+            single = self.TriangleMultiplicationOutgoing(single, single_mask_row)
+            single = row_to_col(single)
+            single = self.TriangleMultiplicationIncoming(single, single_mask_col)
+            single = col_to_row(single)
+            single = self.TriangleAttentionStartingNode(single, single_mask_row)
+            single = row_to_col(single)
+            single = self.TriangleAttentionEndingNode(single, single_mask_col)
+            single = self.PairTransition(single)
+            single = col_to_row(single)
+            z[0][i] = single.to(z[0].device)
+
+        # z = torch.cat(single_templates, dim=-4)
+        if self.last_block:
+            z[0] = gather(z[0], dim=1)
+            z[0] = z[0][:, :-padding_size, :-padding_size, :]
+
+        return z
+
+
 class TemplatePairStack(nn.Module):
     """
     Implements Algorithm 16.
@@ -175,7 +311,7 @@ class TemplatePairStack(nn.Module):
 
         self.blocks = nn.ModuleList()
         for block_id in range(no_blocks):
-            block = TemplatePairStackBlock(
+            block = TemplatePairBlock(
                 c_t=c_t,
                 c_hidden_tri_att=c_hidden_tri_att,
                 c_hidden_tri_mul=c_hidden_tri_mul,

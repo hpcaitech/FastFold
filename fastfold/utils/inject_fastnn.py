@@ -15,8 +15,9 @@
 import torch
 import torch.nn as nn
 import fastfold
+from fastfold.distributed.comm import copy
 
-from fastfold.model.fastnn import EvoformerBlock, ExtraMSABlock, TemplatePairStackBlock
+from fastfold.model.fastnn import Evoformer, EvoformerStack, ExtraMSAStack
 from fastfold.model.fastnn.embedders import TemplateEmbedder
 
 def copy_layernorm(model_fast, model_ori):
@@ -100,29 +101,29 @@ def copy_native_att(model_fast, model_ori):
 def copy_evoformer_para(block_fast, block_ori):
     # msa_stack
     # MSARowAttentionWithPairBias
-    copy_layernorm(block_fast.msa_stack.MSARowAttentionWithPairBias.layernormM,
+    copy_layernorm(block_fast.msa.MSARowAttentionWithPairBias.layernormM,
                    block_ori.msa_att_row.layer_norm_m)
-    copy_layernorm(block_fast.msa_stack.MSARowAttentionWithPairBias.layernormZ,
+    copy_layernorm(block_fast.msa.MSARowAttentionWithPairBias.layernormZ,
                    block_ori.msa_att_row.layer_norm_z)
 
-    copy_attention(block_fast.msa_stack.MSARowAttentionWithPairBias.attention,
+    copy_attention(block_fast.msa.MSARowAttentionWithPairBias.attention,
                    block_ori.msa_att_row.mha)
 
-    block_fast.msa_stack.MSARowAttentionWithPairBias.linear_b_weights.copy_(
+    block_fast.msa.MSARowAttentionWithPairBias.linear_b_weights.copy_(
         block_ori.msa_att_row.linear_z.weight)
 
-    block_fast.msa_stack.MSARowAttentionWithPairBias.out_bias.copy_(
+    block_fast.msa.MSARowAttentionWithPairBias.out_bias.copy_(
         block_ori.msa_att_row.mha.linear_o.bias)
 
     # MSAColumnAttention
-    copy_layernorm(block_fast.msa_stack.MSAColumnAttention.layernormM,
+    copy_layernorm(block_fast.msa.MSAColumnAttention.layernormM,
                    block_ori.msa_att_col._msa_att.layer_norm_m)
 
-    copy_attention(block_fast.msa_stack.MSAColumnAttention.attention,
+    copy_attention(block_fast.msa.MSAColumnAttention.attention,
                    block_ori.msa_att_col._msa_att.mha)
 
     # MSATransition
-    copy_transition(block_fast.msa_stack.MSATransition, block_ori.core.msa_transition)
+    copy_transition(block_fast.msa.MSATransition, block_ori.core.msa_transition)
 
     # communication
     copy_layernorm(block_fast.communication.layernormM,
@@ -133,16 +134,16 @@ def copy_evoformer_para(block_fast, block_ori):
 
     # pair_stack
     # TriangleMultiplicationOutgoing
-    copy_triangle(block_fast.pair_stack.TriangleMultiplicationOutgoing, block_ori.core.tri_mul_out)
+    copy_triangle(block_fast.pair.TriangleMultiplicationOutgoing, block_ori.core.tri_mul_out)
     # TriangleMultiplicationIncoming
-    copy_triangle(block_fast.pair_stack.TriangleMultiplicationIncoming, block_ori.core.tri_mul_in)
+    copy_triangle(block_fast.pair.TriangleMultiplicationIncoming, block_ori.core.tri_mul_in)
 
     # TriangleAttentionStartingNode
-    copy_triangle_att(block_fast.pair_stack.TriangleAttentionStartingNode,
+    copy_triangle_att(block_fast.pair.TriangleAttentionStartingNode,
                       block_ori.core.tri_att_start)
-    copy_triangle_att(block_fast.pair_stack.TriangleAttentionEndingNode, block_ori.core.tri_att_end)
+    copy_triangle_att(block_fast.pair.TriangleAttentionEndingNode, block_ori.core.tri_att_end)
 
-    copy_transition(block_fast.pair_stack.PairTransition, block_ori.core.pair_transition)
+    copy_transition(block_fast.pair.PairTransition, block_ori.core.pair_transition)
 
 
 def copy_global_attention(model_fast, model_ori):
@@ -274,48 +275,39 @@ def copy_template_para(block_fast, block_ori):
 
 def inject_evoformer(model):
     with torch.no_grad():
-        fastfold_blocks = nn.ModuleList()
-        for block_id, ori_block in enumerate(model.evoformer.blocks):
-            c_m = ori_block.msa_att_row.c_in
-            c_z = ori_block.msa_att_row.c_z
-            is_multimer = ori_block.is_multimer
-            fastfold_block = EvoformerBlock(c_m=c_m,
-                                            c_z=c_z,
-                                            first_block=(block_id == 0),
-                                            last_block=(block_id == len(model.evoformer.blocks) - 1),
-                                            is_multimer=is_multimer,
-                                        )
-
-            copy_evoformer_para(fastfold_block, ori_block)
-
-            fastfold_blocks.append(fastfold_block)
-
-        model.evoformer.blocks = fastfold_blocks
-
-    return model
+        target_module = model.evoformer
+        fast_module = EvoformerStack(
+            c_m=target_module.blocks[0].msa_att_row.c_in,
+            c_z=target_module.blocks[0].msa_att_row.c_z,
+            c_s=target_module.linear.out_features,
+            no_blocks=len(target_module.blocks),
+            blocks_per_ckpt=target_module.blocks_per_ckpt,
+            clear_cache_between_blocks=target_module.clear_cache_between_blocks,
+            is_multimer=target_module.blocks[0].is_multimer,
+        )
+        for target_block, fast_block in zip(target_module.blocks, fast_module.blocks):
+            copy_evoformer_para(fast_block, target_block)
+            if target_block.training == False:
+                fast_block.eval()
+        copy_linear(fast_module.linear, target_module.linear)
+        model.evoformer = fast_module
 
 
-def inject_extraMsaBlock(model):
+def inject_extramsa(model):
     with torch.no_grad():
-        new_model_blocks = nn.ModuleList()
-        for block_id, ori_block in enumerate(model.extra_msa_stack.blocks):
-            c_m = ori_block.msa_att_row.c_in
-            c_z = ori_block.msa_att_row.c_z
-            is_multimer = ori_block.is_multimer
-            new_model_block = ExtraMSABlock(
-                c_m=c_m,
-                c_z=c_z,
-                first_block=(block_id == 0),
-                last_block=(block_id == len(model.extra_msa_stack.blocks) - 1),
-                is_multimer=is_multimer
-            )
-
-            copy_extra_msa_para(new_model_block, ori_block)
-            if ori_block.training == False:
-                new_model_block.eval()
-            new_model_blocks.append(new_model_block)
-
-        model.extra_msa_stack.blocks = new_model_blocks
+        target_module = model.extra_msa_stack
+        fast_module = ExtraMSAStack(
+            c_m=target_module.blocks[0].msa_att_row.c_in,
+            c_z=target_module.blocks[0].msa_att_row.c_z,
+            no_blocks=len(target_module.blocks),
+            clear_cache_between_blocks=target_module.clear_cache_between_blocks,
+            is_multimer=target_module.blocks[0].is_multimer,
+        )
+        for target_block, fast_block in zip(target_module.blocks, fast_module.blocks):
+            copy_extra_msa_para(fast_block, target_block)
+            if target_block.training == False:
+                fast_block.eval()
+        model.extra_msa_stack = fast_module
 
 
 def inject_template(model):
@@ -330,6 +322,6 @@ def inject_template(model):
 
 def inject_fastnn(model):
     inject_evoformer(model)
-    inject_extraMsaBlock(model)
+    inject_extramsa(model)
     inject_template(model)
     return model
