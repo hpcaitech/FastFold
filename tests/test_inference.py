@@ -58,4 +58,4 @@ def inference(chunk_size, inplace):
         fastout = fastmodel(fastbatch)
 
     pos_dif = torch.max(torch.abs(fastout["final_atom_positions"] - out["final_atom_positions"]))
-    assert pos_dif < 1.1, f"Test failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {pos_dif}"
+    assert pos_dif < 1.5, f"Test failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {pos_dif}"
