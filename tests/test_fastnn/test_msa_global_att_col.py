@@ -18,17 +18,6 @@ from fastfold.distributed.comm import gather, scatter, row_to_col
 @pytest.mark.parametrize('world_size', [1, 2])
 @pytest.mark.parametrize('chunk_size', [None, 3])
 def test_state_dict(world_size, chunk_size):
-    run_func = partial(_test_msa_global_att_col, world_size=world_size, chunk_size=chunk_size)
-    mp.spawn(run_func, nprocs=world_size)
-
-
-def _test_msa_global_att_col(rank, world_size, chunk_size):
-    os.environ['RANK'] = str(rank)
-    os.environ['LOCAL_RANK'] = str(rank)
-    os.environ['WORLD_SIZE'] = str(world_size)
-    # init distributed for Dynamic Axial Parallelism
-    fastfold.distributed.init_dap()
-    
     config = model_config('model_1')
     config.globals.chunk_size = chunk_size
     config.globals.inplace = False
@@ -38,11 +27,26 @@ def _test_msa_global_att_col(rank, world_size, chunk_size):
     fast_module = deepcopy(target_module)
     fast_module = inject_fastnn(fast_module)
 
-    target_module = target_module.extra_msa_stack.blocks[0].msa_att_col.eval().cuda()
-    fast_module = fast_module.extra_msa_stack.blocks[0].msa_stack.MSAColumnAttention.eval().cuda()
+    target_module = target_module.extra_msa_stack.blocks[0].msa_att_col.eval()
+    fast_module = fast_module.extra_msa_stack.blocks[0].msa_stack.MSAColumnAttention.eval()
+    
+    run_func = partial(_test_msa_global_att_col, world_size=world_size, chunk_size=chunk_size, 
+                       fast_module=fast_module, target_module=target_module, config=config)
+    mp.spawn(run_func, nprocs=world_size)
 
-    msa_len = 2560
-    seq_len = 68
+
+def _test_msa_global_att_col(rank, world_size, chunk_size, fast_module, target_module, config):
+    os.environ['RANK'] = str(rank)
+    os.environ['LOCAL_RANK'] = str(rank)
+    os.environ['WORLD_SIZE'] = str(world_size)
+    # init distributed for Dynamic Axial Parallelism
+    fastfold.distributed.init_dap()
+
+    target_module = target_module.cuda()
+    fast_module = fast_module.cuda()
+
+    msa_len = 512
+    seq_len = 128
     m = torch.randn((msa_len, seq_len, 64)).cuda()
     m_mask = torch.ones((msa_len, seq_len)).cuda().to(dtype=m.dtype)
     m_mask[128:, :] = 0

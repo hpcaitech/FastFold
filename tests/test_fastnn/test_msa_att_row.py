@@ -19,17 +19,6 @@ from fastfold.distributed.comm import gather, scatter
 @pytest.mark.parametrize('world_size', [1, 2])
 @pytest.mark.parametrize('chunk_size', [None, 3])
 def test_state_dict(world_size, chunk_size):
-    run_func = partial(_test_evoformer_stack, world_size=world_size, chunk_size=chunk_size)
-    mp.spawn(run_func, nprocs=world_size)
-
-
-def _test_evoformer_stack(rank, world_size, chunk_size):
-    os.environ['RANK'] = str(rank)
-    os.environ['LOCAL_RANK'] = str(rank)
-    os.environ['WORLD_SIZE'] = str(world_size)
-    # init distributed for Dynamic Axial Parallelism
-    fastfold.distributed.init_dap()
-    
     config = model_config('model_1')
     config.globals.chunk_size = chunk_size
     config.globals.inplace = False
@@ -39,13 +28,29 @@ def _test_evoformer_stack(rank, world_size, chunk_size):
     fast_module = deepcopy(target_module)
     fast_module = inject_fastnn(fast_module)
 
-    target_module1 = target_module.evoformer.blocks[0].msa_att_row.eval().cuda()
-    target_module2 = target_module.evoformer.blocks[0].msa_dropout_layer.eval().cuda()
+    target_module1 = target_module.evoformer.blocks[0].msa_att_row.eval()
+    target_module2 = target_module.evoformer.blocks[0].msa_dropout_layer.eval()
     
-    fast_module = fast_module.evoformer.blocks[0].msa.MSARowAttentionWithPairBias.eval().cuda()
+    fast_module = fast_module.evoformer.blocks[0].msa.MSARowAttentionWithPairBias.eval()
+    
+    run_func = partial(_test_msa_att_row, world_size=world_size, chunk_size=chunk_size, 
+                       fast_module=fast_module, target_module1=target_module1, target_module2=target_module2, config=config)
+    mp.spawn(run_func, nprocs=world_size)
 
-    msa_len = 122
-    seq_len = 68
+
+def _test_msa_att_row(rank, world_size, chunk_size, fast_module, target_module1, target_module2, config):
+    os.environ['RANK'] = str(rank)
+    os.environ['LOCAL_RANK'] = str(rank)
+    os.environ['WORLD_SIZE'] = str(world_size)
+    # init distributed for Dynamic Axial Parallelism
+    fastfold.distributed.init_dap()
+
+    target_module1 = target_module1.cuda()
+    target_module2 = target_module2.cuda()
+    fast_module = fast_module.cuda()
+
+    msa_len = 300
+    seq_len = 300
     m = torch.randn((msa_len, seq_len, 256)).cuda()
     m_mask = torch.ones((msa_len, seq_len)).cuda().to(dtype=m.dtype)
     z = torch.randn((seq_len, seq_len, 128)).cuda()
