@@ -111,25 +111,71 @@ class TemplatePointwiseAttention(nn.Module):
         # [*, N_res, N_res, 1, C_z]
         biases = [bias]
         if chunk_size is not None:
-            para_dim_t0 = t.shape[0]
-            para_dim_t1 = t.shape[1]
-            chunk_size_t = chunk_size * 4
+            out = torch.empty_like(z)
             mask = torch.sum(template_mask.to(z.device)) > 0
-
-            for ti in range(0, para_dim_t0, chunk_size_t):
-                t0 = t[ti:ti + chunk_size_t, :, :, :]
-                t0 = t0.to(z.device)
-                para_dim_t_part = t0.shape[0]
-                for i in range(0, para_dim_t_part, chunk_size):
-                    for j in range(0, para_dim_t1, chunk_size):
-                        z[i + ti:i + ti + chunk_size, j:j + chunk_size, :, :] += self.mha(
-                            q_x=z[i + ti:i + ti + chunk_size, j:j + chunk_size, :, :], kv_x=t0[i:i + chunk_size, j:j + chunk_size, :, :], biases=biases
-                            ) * mask
+            for t0 in range(t.shape[0]):
+                for t1 in range(0, t.shape[1], chunk_size):
+                    tt = t[t0, t1:t1 + chunk_size, :].unsqueeze(0)
+                    tt = tt.to(z.device)
+                    out[t0, t1:t1 + chunk_size, :] = self.mha(
+                        q_x=z[t0, t1:t1 + chunk_size, :].unsqueeze(0),
+                        kv_x=tt,
+                        biases=biases
+                    ).squeeze(0) * mask
         else:
-            t = self.mha(q_x=z, kv_x=t, biases=biases)
+            out = self.mha(q_x=z, kv_x=t, biases=biases)
             # [*, N_res, N_res, C_z]
-            t = t * (torch.sum(template_mask) > 0)
-            z = z + t
+            out = out * (torch.sum(template_mask) > 0)
+            
+        out = out.squeeze(-2)
+
+        return out
+
+    def inplace(self, 
+        t: torch.Tensor, 
+        z: torch.Tensor, 
+        template_mask: Optional[torch.Tensor] = None,
+        chunk_size: Optional[int] = None
+    ) -> torch.Tensor:
+        """
+        Args:
+            t:
+                [*, N_templ, N_res, N_res, C_t] template embedding
+            z:
+                [*, N_res, N_res, C_t] pair embedding
+            template_mask:
+                [*, N_templ] template mask
+        Returns:
+            [*, N_res, N_res, C_z] pair embedding update
+        """
+        if template_mask is None:
+            template_mask = t.new_ones(t.shape[:-3])
+
+        bias = self.inf * (template_mask[..., None, None, None, None, :] - 1)
+
+        # [*, N_res, N_res, 1, C_z]
+        z = z.unsqueeze(-2)
+
+        # [*, N_res, N_res, N_temp, C_t]
+        t = permute_final_dims(t, (1, 2, 0, 3))
+
+        # [*, N_res, N_res, 1, C_z]
+        biases = [bias]
+        if chunk_size is not None:
+            mask = torch.sum(template_mask.to(z.device)) > 0
+            for t0 in range(t.shape[0]):
+                for t1 in range(0, t.shape[1], chunk_size):
+                    tt = t[t0, t1:t1 + chunk_size, :].unsqueeze(0)
+                    tt = tt.to(z.device)
+                    z[t0, t1:t1 + chunk_size, :] += self.mha(
+                        q_x=z[t0, t1:t1 + chunk_size, :].unsqueeze(0),
+                        kv_x=tt,
+                        biases=biases
+                    ).squeeze(0) * mask
+        else:
+            t = self.mha(q_x=z, kv_x=t, biases=biases) * (torch.sum(template_mask) > 0)
+            # [*, N_res, N_res, C_z]
+            z += t
             
         z = z.squeeze(-2)
 
@@ -204,13 +250,13 @@ class TemplatePairBlock(nn.Module):
             single_mask_row = scatter(single_mask, dim=1)
             single_mask_col = scatter(single_mask, dim=2)
 
-            single = self.TriangleMultiplicationOutgoing(single, single_mask_row)
-            single = row_to_col(single)
-            single = self.TriangleMultiplicationIncoming(single, single_mask_col)
-            single = col_to_row(single)
             single = self.TriangleAttentionStartingNode(single, single_mask_row)
             single = row_to_col(single)
             single = self.TriangleAttentionEndingNode(single, single_mask_col)
+            single = col_to_row(single)
+            single = self.TriangleMultiplicationOutgoing(single, single_mask_row)
+            single = row_to_col(single)
+            single = self.TriangleMultiplicationIncoming(single, single_mask_col)
             single = self.PairTransition(single)
             single = col_to_row(single)
             z[i] = single
@@ -251,19 +297,21 @@ class TemplatePairBlock(nn.Module):
             single_mask_row = scatter(single_mask, dim=1)
             single_mask_col = scatter(single_mask, dim=2)
 
-            single = self.TriangleMultiplicationOutgoing(single, single_mask_row)
-            single = row_to_col(single)
-            single = self.TriangleMultiplicationIncoming(single, single_mask_col)
-            single = col_to_row(single)
             single = self.TriangleAttentionStartingNode(single, single_mask_row)
             single = row_to_col(single)
             single = self.TriangleAttentionEndingNode(single, single_mask_col)
+            single = col_to_row(single)
+            single = self.TriangleMultiplicationOutgoing(single, single_mask_row)
+            single = row_to_col(single)
+            single = self.TriangleMultiplicationIncoming(single, single_mask_col)
             single = self.PairTransition(single)
             single = col_to_row(single)
             z[0][i] = single.to(z[0].device)
 
         # z = torch.cat(single_templates, dim=-4)
         if self.last_block:
+            if isinstance(chunk_size, int) and 1 <= chunk_size <= 4:
+                z[0] = z[0].to(mask.device)
             z[0] = gather(z[0], dim=1)
             z[0] = z[0][:, :-padding_size, :-padding_size, :]
 
