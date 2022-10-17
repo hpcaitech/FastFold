@@ -1161,7 +1161,7 @@ class GlobalAttention(nn.Module):
             q = torch.sum(m_part * mask_part.unsqueeze(-1), dim=-2) / (
                 torch.sum(mask_part, dim=-1)[..., None] + self.eps
             )
-
+            q = q * self.scaling
             q = self.to_q(q)
             q = q.view(q.shape[:-1] + (self.n_head, -1))
 

@@ -15,8 +15,8 @@ from fastfold.utils.import_weights import import_jax_weights_
 @pytest.mark.parametrize('world_size', [1, 2])
 @pytest.mark.parametrize('chunk_size', [None, 3])
 @pytest.mark.parametrize('inplace', [False, True])
-@pytest.mark.parametrize('msa_len', [42, 106, 250])
-@pytest.mark.parametrize('seq_len', [54, 96, 252])
+@pytest.mark.parametrize('msa_len', [60])
+@pytest.mark.parametrize('seq_len', [54, 252])
 def test_state_dict(world_size, chunk_size, inplace, msa_len, seq_len):
     run_func = partial(_test_evoformer, world_size=world_size, chunk_size=chunk_size, 
                        inplace=inplace, msa_len=msa_len, seq_len=seq_len)
@@ -57,7 +57,7 @@ def _test_evoformer(rank, world_size, chunk_size, inplace, msa_len, seq_len):
         m_out, z_out = target_module1(m, z, m_mask, z_mask)
         m_out, z_out = target_module2(m_out, z_out, m_mask, z_mask)
 
-        if inplace:
+        if not inplace:
             m_fast, z_fast = fast_module_1(m, z, m_mask, z_mask)
             m_fast, z_fast = fast_module_2(m_fast, z_fast, m_mask, z_mask)
         else:
