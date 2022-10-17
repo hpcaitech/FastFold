@@ -24,9 +24,11 @@ jobs:
           ssh-key: ${{ secrets.SSH_KEY_FOR_CI }}
       - name: Install FastFold
         run: |
-          conda install openmm=7.7.0 pdbfixer -c conda-forge -y
+          [ ! -z "$(ls -A /github/home/fastfold_cache/)" ] && cp -r /github/home/fastfold_cache/* /__w/FastFold/FastFold/
           pip install biopython==1.79 dm-tree==0.1.6 ml-collections==0.1.0 scipy==1.7.1 pandas pytest
           pip install -e .
+          cp -r /__w/FastFold/FastFold/build /github/home/fastfold_cache/
+          cp /__w/FastFold/FastFold/*.so /github/home/fastfold_cache/
       - name: Unit Testing
         run: |
           PYTHONPATH=$PWD pytest test
