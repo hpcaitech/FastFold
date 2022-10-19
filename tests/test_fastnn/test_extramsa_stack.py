@@ -10,6 +10,7 @@ from fastfold.model.fastnn.ops import set_chunk_size
 from fastfold.model.hub import AlphaFold
 from fastfold.utils.inject_fastnn import inject_fastnn
 from fastfold.utils.import_weights import import_jax_weights_
+from fastfold.utils.test_utils import get_param_path
 
 
 @pytest.mark.parametrize('world_size', [1, 2])
@@ -21,7 +22,7 @@ def test_state_dict(world_size, chunk_size, inplace):
     config.globals.inplace = False
     
     target_module = AlphaFold(config)
-    import_jax_weights_(target_module, '/data/scratch/alphafold/alphafold/params/params_model_1.npz')
+    import_jax_weights_(target_module, get_param_path())
     fast_module = copy.deepcopy(target_module)
     fast_module = inject_fastnn(fast_module)
     

@@ -12,6 +12,7 @@ from fastfold.model.hub import AlphaFold
 from fastfold.utils.inject_fastnn import inject_fastnn
 from fastfold.utils.import_weights import import_jax_weights_
 from fastfold.utils.tensor_utils import tensor_tree_map
+from fastfold.utils.test_utils import get_param_path, get_data_path
 
 
 @pytest.mark.parametrize('world_size', [1, 2])
@@ -22,7 +23,7 @@ def test_state_dict(world_size, chunk_size, inplace):
     config.globals.chunk_size = chunk_size
     config.globals.inplace = False
     target_module = AlphaFold(config)
-    import_jax_weights_(target_module, '/data/scratch/alphafold/alphafold/params/params_model_1.npz')
+    import_jax_weights_(target_module, get_param_path())
 
     fast_module = copy.deepcopy(target_module)
     fast_module = inject_fastnn(fast_module)
@@ -32,7 +33,7 @@ def test_state_dict(world_size, chunk_size, inplace):
     target_module = target_module.eval()
     fast_module = fast_module.eval()
     
-    batch = pickle.load(open('/home/lclgy/mono_batch.pkl', 'rb'))
+    batch = pickle.load(open(get_data_path(), 'rb'))
     fetch_cur_batch = lambda t: t[..., 0]
     feats = tensor_tree_map(fetch_cur_batch, batch)
     template_feats = {k: v for k, v in feats.items() if k.startswith("template_")}

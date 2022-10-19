@@ -13,6 +13,7 @@ from fastfold.utils.import_weights import import_jax_weights_
 from colossalai.context.parallel_mode import ParallelMode
 from colossalai.core import global_context as gpc
 from fastfold.distributed.comm import gather, scatter, row_to_col
+from fastfold.utils.test_utils import get_param_path
 
 
 @pytest.mark.parametrize('world_size', [1, 2])
@@ -22,7 +23,7 @@ def test_state_dict(world_size, chunk_size):
     config.globals.chunk_size = chunk_size
     config.globals.inplace = False
     target_module = AlphaFold(config)
-    import_jax_weights_(target_module, '/data/scratch/alphafold/alphafold/params/params_model_1.npz')
+    import_jax_weights_(target_module, get_param_path())
 
     fast_module = deepcopy(target_module)
     fast_module = inject_fastnn(fast_module)
