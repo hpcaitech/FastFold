@@ -25,7 +25,7 @@ jobs:
       - name: Install FastFold
         run: |
           [ ! -z "$(ls -A /github/home/fastfold_cache/)" ] && cp -r /github/home/fastfold_cache/* /__w/FastFold/FastFold/
-          pip install pytorch=1.12 torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu113
+          pip install pytorch==1.12 torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu113
           pip install colossalai==0.1.10+torch1.12cu11.3 -f https://release.colossalai.org
           pip install biopython==1.79 dm-tree==0.1.6 ml-collections==0.1.0 scipy==1.7.1 triton==2.0.0.dev20221003 pandas pytest
           pip install -e .
