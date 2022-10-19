@@ -24,11 +24,11 @@ def test_state_dict(world_size, chunk_size, inplace):
     config.globals.inplace = False
     model = AlphaFold(config)
     import_jax_weights_(model, get_param_path())
-    model.eval().cuda()
+    model.eval()
     
     fastmodel = copy.deepcopy(model)
     fastmodel = inject_fastnn(fastmodel)
-    fastmodel.eval().cuda()
+    fastmodel.eval()
     
     run_func = partial(run_dist, world_size=world_size, chunk_size=chunk_size, inplace=inplace, model=model, fastmodel=fastmodel, config=config)
     mp.spawn(run_func, nprocs=world_size)
@@ -41,6 +41,9 @@ def run_dist(rank, world_size, chunk_size, inplace, model, fastmodel, config):
     # init distributed for Dynamic Axial Parallelism
     fastfold.distributed.init_dap()
 
+    model = model.cuda()
+    fastmodel = fastmodel.cuda()
+    
     set_chunk_size(model.globals.chunk_size)
     batch = pickle.load(open(get_data_path(), 'rb'))
     batch = {k: torch.as_tensor(v).cuda() for k, v in batch.items()}
