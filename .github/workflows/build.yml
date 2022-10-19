@@ -31,7 +31,7 @@ jobs:
           cp /__w/FastFold/FastFold/*.so /github/home/fastfold_cache/
       - name: Unit Testing
         run: |
-          PYTHONPATH=$PWD pytest tests
+          PYTHONPATH=$PWD pytest tests/test_inference.py
         env:
           NCCL_SHM_DISABLE: 1
 
