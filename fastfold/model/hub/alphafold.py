@@ -36,9 +36,6 @@ from fastfold.model.nn.evoformer import EvoformerStack, ExtraMSAStack
 from fastfold.model.nn.heads import AuxiliaryHeads
 import fastfold.common.residue_constants as residue_constants
 from fastfold.model.nn.structure_module import StructureModule
-from fastfold.model.loss import (
-    compute_plddt,
-)
 from fastfold.utils.tensor_utils import (
     dict_multimap,
     tensor_tree_map,
@@ -279,15 +276,25 @@ class AlphaFold(nn.Module):
                 # [*, N, N, C_z]
                 z = z + template_embeds["template_pair_embedding"]
             else:
-                template_embeds, z = self.template_embedder(
-                    template_feats,
-                    z,
-                    pair_mask.to(dtype=z.dtype),
-                    no_batch_dims,
-                    self.globals.chunk_size,
-                    inplace=self.globals.inplace
-                )
-
+                if self.globals.inplace:
+                    template_embeds = self.template_embedder(
+                        template_feats,
+                        z,
+                        pair_mask.to(dtype=z.dtype),
+                        no_batch_dims,
+                        self.globals.chunk_size,
+                        inplace=self.globals.inplace
+                    )
+                    z = template_embeds["template_pair_embedding"]
+                else:
+                    template_embeds = self.template_embedder(
+                        template_feats,
+                        z,
+                        pair_mask.to(dtype=z.dtype),
+                        no_batch_dims,
+                        self.globals.chunk_size,
+                    )
+                    z = z + template_embeds["template_pair_embedding"]
             if(
                 self.config.template.embed_angles or 
                 (self.globals.is_multimer and self.config.template.enabled)
