@@ -23,7 +23,7 @@ def test_state_dict(world_size, chunk_size, inplace):
     mp.spawn(run_func, nprocs=world_size)
 
 
-def run_dist(rank, world_size, chunk_size, inplace, model, fastmodel, config):
+def run_dist(rank, world_size, chunk_size, inplace):
     os.environ['RANK'] = str(rank)
     os.environ['LOCAL_RANK'] = str(rank)
     os.environ['WORLD_SIZE'] = str(world_size)
