@@ -16,6 +16,8 @@ import torch
 
 from fastfold.model.fastnn import EvoformerStack, ExtraMSAStack
 from fastfold.model.fastnn.embedders import TemplateEmbedder
+from fastfold.model.fastnn.ops import RecyclingEmbedder
+
 
 def copy_layernorm(model_fast, model_ori):
     model_fast.weight.copy_(model_ori.weight)
@@ -317,8 +319,28 @@ def inject_template(model):
         model.template_embedder = fast_module
 
 
+def inject_embedder(model):
+    with torch.no_grad():
+        target_module = model.recycling_embedder
+        fast_module = RecyclingEmbedder(
+            c_m=target_module.c_m,
+            c_z=target_module.c_z,
+            min_bin=target_module.min_bin,
+            max_bin=target_module.max_bin,
+            no_bins=target_module.no_bins,
+            inf=target_module.inf
+        )
+        copy_native_linear(fast_module.linear, target_module.linear)
+        copy_layernorm(fast_module.layer_norm_m, target_module.layer_norm_m)
+        copy_layernorm(fast_module.layer_norm_z, target_module.layer_norm_z)
+        if target_module.training == False:
+            fast_module.eval()
+        model.recycling_embedder = fast_module
+
+
 def inject_fastnn(model):
     inject_evoformer(model)
     inject_extramsa(model)
     inject_template(model)
+    inject_embedder(model)
     return model
