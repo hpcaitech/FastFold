@@ -19,18 +19,7 @@ from fastfold.utils.test_utils import get_param_path, get_data_path
 @pytest.mark.parametrize('chunk_size', [None, 3])
 @pytest.mark.parametrize('inplace', [False, True])
 def test_state_dict(world_size, chunk_size, inplace):
-    config = model_config('model_1')
-    config.globals.chunk_size = chunk_size
-    config.globals.inplace = False
-    model = AlphaFold(config)
-    import_jax_weights_(model, get_param_path())
-    model.eval()
-    
-    fastmodel = copy.deepcopy(model)
-    fastmodel = inject_fastnn(fastmodel)
-    fastmodel.eval()
-    
-    run_func = partial(run_dist, world_size=world_size, chunk_size=chunk_size, inplace=inplace, model=model, fastmodel=fastmodel, config=config)
+    run_func = partial(run_dist, world_size=world_size, chunk_size=chunk_size, inplace=inplace)
     mp.spawn(run_func, nprocs=world_size)
 
 
@@ -41,8 +30,16 @@ def run_dist(rank, world_size, chunk_size, inplace, model, fastmodel, config):
     # init distributed for Dynamic Axial Parallelism
     fastfold.distributed.init_dap()
 
-    model = model.cuda()
-    fastmodel = fastmodel.cuda()
+    config = model_config('model_1')
+    config.globals.chunk_size = chunk_size
+    config.globals.inplace = False
+    model = AlphaFold(config)
+    import_jax_weights_(model, get_param_path())
+    model = model.eval().cuda()
+    
+    fastmodel = copy.deepcopy(model)
+    fastmodel = inject_fastnn(fastmodel)
+    fastmodel = fastmodel.eval().cuda()
     
     set_chunk_size(model.globals.chunk_size)
     batch = pickle.load(open(get_data_path(), 'rb'))
