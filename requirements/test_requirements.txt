@@ -1,0 +1,6 @@
+biopython==1.79
+dm-tree==0.1.6
+ml-collections==0.1.0
+scipy==1.7.1
+pandas
+pytest

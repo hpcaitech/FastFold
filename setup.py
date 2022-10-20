@@ -140,5 +140,5 @@ setup(
     ext_modules=ext_modules,
     package_data={'fastfold': ['model/fastnn/kernel/cuda_native/csrc/*']},
     cmdclass={'build_ext': BuildExtension} if ext_modules else {},
-    install_requires=['einops', 'colossalai'],
+    install_requires=['einops'],
 )
