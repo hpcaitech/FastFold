@@ -1,0 +1,3 @@
+einops
+-f https://release.colossalai.org
+colossalai==0.1.10+torch1.12cu11.3
