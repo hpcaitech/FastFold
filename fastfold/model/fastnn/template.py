@@ -411,7 +411,12 @@ class TemplatePairStack(nn.Module):
         if chunk_size is None:
             chunk_size = t.shape[0]
         for i in range(0, t.shape[0], chunk_size):
-            t[i:i + chunk_size] = self.layer_norm(t[i:i + chunk_size])
+            if t.shape[1] > 4000:
+                chunk_new = int(4000 * 4000 / t.shape[1])
+                for j in range(0, t.shape[1], chunk_new):
+                    t[i:i + chunk_size, j:j + chunk_new] = self.layer_norm(t[i:i + chunk_size, j:j + chunk_new])
+            else:
+                t[i:i + chunk_size] = self.layer_norm(t[i:i + chunk_size])
         return t
     
     def inplace(
@@ -451,5 +456,10 @@ class TemplatePairStack(nn.Module):
         if chunk_size is None:
             chunk_size = t[0].shape[0]
         for i in range(0, t[0].shape[0], chunk_size):
-            t[0][i:i + chunk_size] = self.layer_norm(t[0][i:i + chunk_size].to(mask.device)).to(t[0].device)
+            if t[0].shape[1] > 4000:
+                chunk_new = int(4000 * 4000 / t[0].shape[1])
+                for j in range(0, t[0].shape[1], chunk_new):
+                    t[0][i:i + chunk_size, j:j + chunk_new] = self.layer_norm(t[0][i:i + chunk_size, j:j + chunk_new].to(mask.device)).to(t[0].device)
+            else:
+                t[0][i:i + chunk_size] = self.layer_norm(t[0][i:i + chunk_size].to(mask.device)).to(t[0].device)
         return t
