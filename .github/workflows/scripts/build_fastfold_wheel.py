@@ -57,7 +57,7 @@ def all_wheel_info():
                 wheel_info[torch_version][cuda_version][python_version] = dict(url=url)
     return wheel_info
 
-def build_colossalai(wheel_info):
+def build_fastfold(wheel_info):
     cuda_version_major, cuda_version_minor = get_cuda_bare_metal_version()
     cuda_version_on_host = f'{cuda_version_major}.{cuda_version_minor}'
 
@@ -91,7 +91,7 @@ def main():
             if key not in torch_versions:
                 wheel_info.pop(key)
 
-    build_colossalai(wheel_info)
+    build_fastfold(wheel_info)
 
 if __name__ == '__main__':
     main()

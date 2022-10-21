@@ -350,105 +350,105 @@ def inference_monomer_model(args):
     with open(args.fasta_path, "r") as fp:
         fasta = fp.read()
     seqs, tags = parse_fasta(fasta)
+    seq, tag = seqs[0], tags[0]
 
-    for tag, seq in zip(tags, seqs):
-        print(f"tag:{tag}\nseq[{len(seq)}]:{seq}")
-        batch = [None]
-        
-        fasta_path = os.path.join(args.output_dir, "tmp.fasta")
-        with open(fasta_path, "w") as fp:
-            fp.write(f">{tag}\n{seq}")
+    print(f"tag:{tag}\nseq[{len(seq)}]:{seq}")
+    batch = [None]
+    
+    fasta_path = os.path.join(args.output_dir, "tmp.fasta")
+    with open(fasta_path, "w") as fp:
+        fp.write(f">{tag}\n{seq}")
 
-        print("Generating features...")
-        local_alignment_dir = os.path.join(alignment_dir, tag)
+    print("Generating features...")
+    local_alignment_dir = os.path.join(alignment_dir, tag)
 
-        if (args.use_precomputed_alignments is None):
-            if not os.path.exists(local_alignment_dir):
-                os.makedirs(local_alignment_dir)
-            if args.enable_workflow:
-                print("Running alignment with ray workflow...")
-                alignment_data_workflow_runner = FastFoldDataWorkFlow(
-                    jackhmmer_binary_path=args.jackhmmer_binary_path,
-                    hhblits_binary_path=args.hhblits_binary_path,
-                    hhsearch_binary_path=args.hhsearch_binary_path,
-                    uniref90_database_path=args.uniref90_database_path,
-                    mgnify_database_path=args.mgnify_database_path,
-                    bfd_database_path=args.bfd_database_path,
-                    uniclust30_database_path=args.uniclust30_database_path,
-                    pdb70_database_path=args.pdb70_database_path,
-                    use_small_bfd=use_small_bfd,
-                    no_cpus=args.cpus,
-                )
-                t = time.perf_counter()
-                alignment_data_workflow_runner.run(fasta_path, alignment_dir=local_alignment_dir)
-                print(f"Alignment data workflow time: {time.perf_counter() - t}")
-            else:
-                alignment_runner = data_pipeline.AlignmentRunner(
-                    jackhmmer_binary_path=args.jackhmmer_binary_path,
-                    hhblits_binary_path=args.hhblits_binary_path,
-                    hhsearch_binary_path=args.hhsearch_binary_path,
-                    uniref90_database_path=args.uniref90_database_path,
-                    mgnify_database_path=args.mgnify_database_path,
-                    bfd_database_path=args.bfd_database_path,
-                    uniclust30_database_path=args.uniclust30_database_path,
-                    pdb70_database_path=args.pdb70_database_path,
-                    use_small_bfd=use_small_bfd,
-                    no_cpus=args.cpus,
-                )
-                alignment_runner.run(fasta_path, local_alignment_dir)
-                
-        feature_dict = data_processor.process_fasta(fasta_path=fasta_path,
-                                                alignment_dir=local_alignment_dir)
+    if (args.use_precomputed_alignments is None):
+        if not os.path.exists(local_alignment_dir):
+            os.makedirs(local_alignment_dir)
+        if args.enable_workflow:
+            print("Running alignment with ray workflow...")
+            alignment_data_workflow_runner = FastFoldDataWorkFlow(
+                jackhmmer_binary_path=args.jackhmmer_binary_path,
+                hhblits_binary_path=args.hhblits_binary_path,
+                hhsearch_binary_path=args.hhsearch_binary_path,
+                uniref90_database_path=args.uniref90_database_path,
+                mgnify_database_path=args.mgnify_database_path,
+                bfd_database_path=args.bfd_database_path,
+                uniclust30_database_path=args.uniclust30_database_path,
+                pdb70_database_path=args.pdb70_database_path,
+                use_small_bfd=use_small_bfd,
+                no_cpus=args.cpus,
+            )
+            t = time.perf_counter()
+            alignment_data_workflow_runner.run(fasta_path, alignment_dir=local_alignment_dir)
+            print(f"Alignment data workflow time: {time.perf_counter() - t}")
+        else:
+            alignment_runner = data_pipeline.AlignmentRunner(
+                jackhmmer_binary_path=args.jackhmmer_binary_path,
+                hhblits_binary_path=args.hhblits_binary_path,
+                hhsearch_binary_path=args.hhsearch_binary_path,
+                uniref90_database_path=args.uniref90_database_path,
+                mgnify_database_path=args.mgnify_database_path,
+                bfd_database_path=args.bfd_database_path,
+                uniclust30_database_path=args.uniclust30_database_path,
+                pdb70_database_path=args.pdb70_database_path,
+                use_small_bfd=use_small_bfd,
+                no_cpus=args.cpus,
+            )
+            alignment_runner.run(fasta_path, local_alignment_dir)
+            
+    feature_dict = data_processor.process_fasta(fasta_path=fasta_path,
+                                            alignment_dir=local_alignment_dir)
 
-        # Remove temporary FASTA file
-        os.remove(fasta_path)
+    # Remove temporary FASTA file
+    os.remove(fasta_path)
 
-        processed_feature_dict = feature_processor.process_features(
-            feature_dict,
-            mode='predict',
-        )
+    processed_feature_dict = feature_processor.process_features(
+        feature_dict,
+        mode='predict',
+    )
 
-        batch = processed_feature_dict
+    batch = processed_feature_dict
 
-        manager = mp.Manager()
-        result_q = manager.Queue()
-        torch.multiprocessing.spawn(inference_model, nprocs=args.gpus, args=(args.gpus, result_q, batch, args))
+    manager = mp.Manager()
+    result_q = manager.Queue()
+    torch.multiprocessing.spawn(inference_model, nprocs=args.gpus, args=(args.gpus, result_q, batch, args))
 
-        out = result_q.get()
+    out = result_q.get()
 
-        # Toss out the recycling dimensions --- we don't need them anymore
-        batch = tensor_tree_map(lambda x: np.array(x[..., -1].cpu()), batch)
-        
-        plddt = out["plddt"]
-        mean_plddt = np.mean(plddt)
+    # Toss out the recycling dimensions --- we don't need them anymore
+    batch = tensor_tree_map(lambda x: np.array(x[..., -1].cpu()), batch)
+    
+    plddt = out["plddt"]
+    mean_plddt = np.mean(plddt)
 
-        plddt_b_factors = np.repeat(plddt[..., None], residue_constants.atom_type_num, axis=-1)
+    plddt_b_factors = np.repeat(plddt[..., None], residue_constants.atom_type_num, axis=-1)
 
-        unrelaxed_protein = protein.from_prediction(features=batch,
-                                                    result=out,
-                                                    b_factors=plddt_b_factors)
+    unrelaxed_protein = protein.from_prediction(features=batch,
+                                                result=out,
+                                                b_factors=plddt_b_factors)
 
-        # Save the unrelaxed PDB.
-        unrelaxed_output_path = os.path.join(args.output_dir,
-                                                f'{tag}_{args.model_name}_unrelaxed.pdb')
-        with open(unrelaxed_output_path, 'w') as f:
-            f.write(protein.to_pdb(unrelaxed_protein))
+    # Save the unrelaxed PDB.
+    unrelaxed_output_path = os.path.join(args.output_dir,
+                                            f'{tag}_{args.model_name}_unrelaxed.pdb')
+    with open(unrelaxed_output_path, 'w') as f:
+        f.write(protein.to_pdb(unrelaxed_protein))
 
-        amber_relaxer = relax.AmberRelaxation(
-            use_gpu=True,
-            **config.relax,
-        )
+    amber_relaxer = relax.AmberRelaxation(
+        use_gpu=True,
+        **config.relax,
+    )
 
-        # Relax the prediction.
-        t = time.perf_counter()
-        relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_protein)
-        print(f"Relaxation time: {time.perf_counter() - t}")
+    # Relax the prediction.
+    t = time.perf_counter()
+    relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_protein)
+    print(f"Relaxation time: {time.perf_counter() - t}")
 
-        # Save the relaxed PDB.
-        relaxed_output_path = os.path.join(args.output_dir,
-                                            f'{tag}_{args.model_name}_relaxed.pdb')
-        with open(relaxed_output_path, 'w') as f:
-            f.write(relaxed_pdb_str)
+    # Save the relaxed PDB.
+    relaxed_output_path = os.path.join(args.output_dir,
+                                        f'{tag}_{args.model_name}_relaxed.pdb')
+    with open(relaxed_output_path, 'w') as f:
+        f.write(relaxed_pdb_str)
 
 
 if __name__ == "__main__":

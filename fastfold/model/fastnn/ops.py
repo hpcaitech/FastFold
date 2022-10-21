@@ -287,7 +287,7 @@ class SelfAttention(nn.Module):
     def forward(self, in_data, mask, nonbatched_bias=None):
         """
         :param in_data: [batch_size1, batch_size2, len_qkv, qkv_dim]
-        :param bias: None or [batch_size1, batch_size2, n_head, len_q, len_kv]
+        :param mask: None or [batch_size1, batch_size2, len_kv]
         :param nonbatched_bias: None or [batch_size1, n_head, len_q, len_kv]
         """
 
@@ -318,8 +318,13 @@ class SelfAttention(nn.Module):
             logits = torch.matmul(q, k.transpose(-1, -2))
 
             if nonbatched_bias is not None:
+                # logits += bias.unsqueeze(1)
+                # logits += (1e9 * (mask_part - 1))[..., :, None, None, :]
+                # weights = torch.nn.functional.softmax(logits, -1)
                 weights = fused_softmax(logits, mask_part, bias.unsqueeze(1))
             else:
+                # logits += (1e9 * (mask_part - 1))[..., :, None, None, :]
+                # weights = torch.nn.functional.softmax(logits, -1)
                 weights = fused_softmax(logits, mask_part)
 
             weighted_avg = torch.matmul(weights, v)

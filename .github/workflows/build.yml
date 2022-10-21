@@ -1,0 +1,39 @@
+name: Build
+
+on: 
+  pull_request:
+    types: [synchronize, labeled]
+
+jobs:
+  build:
+    name: Build and Test FastFold
+    if: |
+        github.event.pull_request.draft == false &&
+        github.base_ref == 'main' &&
+        github.event.pull_request.base.repo.full_name == 'hpcaitech/FastFold' &&
+        contains( github.event.pull_request.labels.*.name, 'Run Build and Test')
+    runs-on: [self-hosted, gpu]
+    container:
+      image: hpcaitech/pytorch-cuda:1.12.0-11.3.0
+      options: --gpus all --rm -v /data/scratch/fastfold:/data/scratch/fastfold
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          repository: hpcaitech/FastFold
+          ssh-key: ${{ secrets.SSH_KEY_FOR_CI }}
+      - name: Install FastFold
+        run: |
+          [ ! -z "$(ls -A /github/home/fastfold_cache/)" ] && cp -r /github/home/fastfold_cache/* /__w/FastFold/FastFold/
+          pip install -r requirements/requirements.txt
+          pip install -e .
+          pip install -r requirements/test_requirements.txt
+          cp -r /__w/FastFold/FastFold/build /github/home/fastfold_cache/
+          cp /__w/FastFold/FastFold/*.so /github/home/fastfold_cache/
+      - name: Unit Testing
+        run: |
+          PYTHONPATH=$PWD pytest tests
+        env:
+          NCCL_SHM_DISABLE: 1
+
+
