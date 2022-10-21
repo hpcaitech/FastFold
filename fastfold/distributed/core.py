@@ -34,7 +34,7 @@ def init_dap(tensor_model_parallel_size_=None):
     set_missing_distributed_environ('RANK', 0)
     set_missing_distributed_environ('LOCAL_RANK', 0)
     set_missing_distributed_environ('MASTER_ADDR', "localhost")
-    set_missing_distributed_environ('MASTER_PORT', 18416)
+    set_missing_distributed_environ('MASTER_PORT', 18417)
 
     colossalai.launch_from_torch(
         config={"parallel": dict(tensor=dict(size=tensor_model_parallel_size_))})
