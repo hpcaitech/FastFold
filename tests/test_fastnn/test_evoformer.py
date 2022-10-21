@@ -79,6 +79,6 @@ def _test_evoformer(rank, world_size, chunk_size, inplace, get_module_and_output
             z_fast = z_fast[0]
 
     error = torch.mean(torch.abs(m_out.cuda() - m_fast))
-    assert error < 1e-4, f"Test m failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {error}"
+    assert error < 5e-4, f"Test m failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {error}"
     error = torch.mean(torch.abs(z_out.cuda() - z_fast))
-    assert error < 1e-4, f"Test z failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {error}"
+    assert error < 5e-4, f"Test z failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {error}"
