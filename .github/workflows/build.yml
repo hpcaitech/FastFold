@@ -14,7 +14,7 @@ jobs:
         contains( github.event.pull_request.labels.*.name, 'Run Build and Test')
     runs-on: [self-hosted, gpu]
     container:
-      image: hpcaitech/colossalai:0.1.10-torch1.11-cu11.3
+      image: hpcaitech/pytorch-cuda:1.12.0-11.3.0
       options: --gpus all --rm -v /data/scratch/fastfold:/data/scratch/fastfold
     timeout-minutes: 40
     steps:
@@ -25,8 +25,9 @@ jobs:
       - name: Install FastFold
         run: |
           [ ! -z "$(ls -A /github/home/fastfold_cache/)" ] && cp -r /github/home/fastfold_cache/* /__w/FastFold/FastFold/
-          pip install biopython==1.79 dm-tree==0.1.6 ml-collections==0.1.0 scipy==1.7.1 pandas pytest
+          pip install -r requirements/requirements.txt
           pip install -e .
+          pip install -r requirements/test_requirements.txt
           cp -r /__w/FastFold/FastFold/build /github/home/fastfold_cache/
           cp /__w/FastFold/FastFold/*.so /github/home/fastfold_cache/
       - name: Unit Testing
