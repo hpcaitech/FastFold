@@ -24,7 +24,7 @@ def get_module_and_output():
         fast_model = copy.deepcopy(model)
         fast_model = inject_fastnn(fast_model)
         fast_model = fast_model.evoformer
-        fast_model.eval()
+        fast_model.eval().cuda()
         
         model = model.evoformer
         model.eval().cuda()
@@ -60,7 +60,7 @@ def _test_evoformer_stack(rank, world_size, chunk_size, inplace, get_module_and_
 
     fast_module, config, out, data = get_module_and_output
     inputs = [copy.deepcopy(i).cuda() for i in data]
-    fast_module.cuda()
+    fast_module = copy.deepcopy(fast_module).eval().cuda()
 
     with torch.no_grad():
         set_chunk_size(chunk_size)
