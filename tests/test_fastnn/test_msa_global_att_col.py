@@ -74,5 +74,5 @@ def _test_msa_global_att_col(rank, world_size, chunk_size, get_openfold_module_a
         m_fast = gather(m_fast, dim=1)
         m_fast = m_fast[:, :-padding_size, :]
 
-    error = torch.max(torch.abs(m_out - m_fast))
+    error = torch.max(torch.abs(m_out.cuda() - m_fast))
     assert error < 5e-5, f"Test m failed at chunk size: {chunk_size}. The position dif is {error}"

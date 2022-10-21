@@ -73,8 +73,8 @@ def _test_evoformer(rank, world_size, chunk_size, inplace, get_module_and_output
             m_fast, z_fast = fast_module_1(*inputs)
             m_fast, z_fast = fast_module_2(m_fast, z_fast, inputs[2], inputs[3])
         else:
-            m_fast, z_fast = fast_module_1([inputs[0]], [inputs[1]], inputs[2], inputs[3])
-            m_fast, z_fast = fast_module_2(m_fast, z_fast, inputs[2], inputs[3])
+            m_fast, z_fast = fast_module_1.inplace([inputs[0]], [inputs[1]], inputs[2], inputs[3])
+            m_fast, z_fast = fast_module_2.inplace(m_fast, z_fast, inputs[2], inputs[3])
             m_fast = m_fast[0]
             z_fast = z_fast[0]
 
