@@ -38,7 +38,7 @@ from fastfold.data import data_pipeline, feature_pipeline, templates
 from fastfold.data.tools import hhsearch, hmmsearch
 from fastfold.workflow.template import FastFoldDataWorkFlow, FastFoldMultimerDataWorkFlow
 
-from fastfold.utils import inject_fastnn
+from fastfold.utils.inject_fastnn import inject_fastnn
 from fastfold.data.parsers import parse_fasta
 from fastfold.utils.import_weights import import_jax_weights_
 from fastfold.utils.tensor_utils import tensor_tree_map

@@ -5,7 +5,11 @@ import torch.nn as nn
 from fastfold.model.fastnn.kernel import LayerNorm
 from fastfold.distributed.comm import col_to_row, row_to_col, scatter
 from fastfold.model.fastnn.kernel import bias_dropout_add, bias_ele_dropout_residual
-from fastfold.model.fastnn.ops import Linear, SelfAttention, ChunkTransition, ChunkTriangleAttentionEndingNode, AsyncChunkTriangleMultiplicationOutgoing, AsyncChunkTriangleMultiplicationIncoming, ChunkTriangleAttentionStartingNode
+from fastfold.model.fastnn.ops import (Linear, SelfAttention, ChunkTransition, 
+                                       ChunkTriangleAttentionStartingNode,
+                                       ChunkTriangleAttentionEndingNode, 
+                                       AsyncChunkTriangleMultiplicationOutgoing, 
+                                       AsyncChunkTriangleMultiplicationIncoming)
 from fastfold.distributed.comm_async import gather_async_opp, gather_async
 
 
@@ -209,10 +213,10 @@ class TriangleAttentionEndingNode(nn.Module):
                                 training=self.training)
 
 
-class PairStack(nn.Module):
+class PairCore(nn.Module):
 
     def __init__(self, d_pair, p_drop=0.25):
-        super(PairStack, self).__init__()
+        super(PairCore, self).__init__()
 
         self.d_pair = d_pair
         self.n_head = 4
