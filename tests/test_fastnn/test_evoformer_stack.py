@@ -25,7 +25,7 @@ def get_module_and_output():
         fast_model = inject_fastnn(fast_model)
         fast_model = fast_model.evoformer
         fast_model.eval().cuda()
-        
+
         model = model.evoformer
         model.eval().cuda()
         
@@ -74,8 +74,8 @@ def _test_evoformer_stack(rank, world_size, chunk_size, inplace, get_module_and_
             z_fast = z_fast[0]
 
     error = torch.mean(torch.abs(out[0].cuda() - m_fast))
-    assert error < 1e-3, f"Test m failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {error}"
+    assert error < 2e-3, f"Test m failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {error}"
     error = torch.mean(torch.abs(out[1].cuda() - z_fast))
-    assert error < 1e-3, f"Test z failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {error}"
+    assert error < 2e-3, f"Test z failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {error}"
     error = torch.mean(torch.abs(out[2].cuda() - s_fast))
-    assert error < 1e-3, f"Test s failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {error}"
+    assert error < 2e-3, f"Test s failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {error}"
