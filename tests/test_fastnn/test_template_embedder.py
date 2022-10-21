@@ -75,7 +75,7 @@ def _test_template_embedder(rank, world_size, chunk_size, inplace, get_openfold_
             z_fast = template_embeds["template_pair_embedding"]
         else:
             template_embeds = fast_module(copy.deepcopy(template_feats), z.cuda(), z_mask.to(dtype=z.dtype).cuda(), 0, chunk_size)
-            z_fast = z + template_embeds["template_pair_embedding"]
+            z_fast = z.cuda() + template_embeds["template_pair_embedding"]
 
     error = torch.mean(torch.abs(z_out.cuda() - z_fast))
     assert error < 1e-5, f"Test z failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {error}"
