@@ -71,10 +71,10 @@ def _test_template_embedder(rank, world_size, chunk_size, inplace, get_openfold_
     with torch.no_grad():
         set_chunk_size(chunk_size)
         if inplace:
-            template_embeds = fast_module(copy.deepcopy(template_feats), z.cuda(), z_mask.to(dtype=z.dtype).cuda(), 0, chunk_size, inplace=inplace)
+            template_embeds = fast_module(copy.deepcopy(template_feats), copy.deepcopy(z).cuda(), z_mask.to(dtype=z.dtype).cuda(), 0, chunk_size, inplace=inplace)
             z_fast = template_embeds["template_pair_embedding"]
         else:
-            template_embeds = fast_module(copy.deepcopy(template_feats), z.cuda(), z_mask.to(dtype=z.dtype).cuda(), 0, chunk_size)
+            template_embeds = fast_module(copy.deepcopy(template_feats), copy.deepcopy(z).cuda(), z_mask.to(dtype=z.dtype).cuda(), 0, chunk_size)
             z_fast = z.cuda() + template_embeds["template_pair_embedding"]
 
     error = torch.mean(torch.abs(z_out.cuda() - z_fast))
