@@ -322,7 +322,7 @@ def inject_template(model):
 def inject_embedder(model):
     if model.evoformer.blocks[0].is_multimer:
         return
-
+ 
     # recycle embedder
     with torch.no_grad():
         target_module = model.recycling_embedder
