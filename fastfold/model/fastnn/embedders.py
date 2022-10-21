@@ -15,22 +15,21 @@
 
 import torch
 import torch.nn as nn
-from typing import Tuple, Dict
+from typing import Tuple
 
 from functools import partial
-from fastfold.utils import all_atom_multimer
 from fastfold.utils.feats import (
     build_template_angle_feat,
     build_template_pair_feat,
 )
-from fastfold.model.nn.primitives import Linear, LayerNorm
+from fastfold.model.fastnn.ops import Linear
 from fastfold.utils.tensor_utils import one_hot
-from fastfold.model.nn.template import (
+from fastfold.model.fastnn.template import (
     TemplatePairStack,
     TemplatePointwiseAttention,
 )
-from fastfold.utils import geometry
 from fastfold.utils.tensor_utils import one_hot, tensor_tree_map, dict_multimap
+
 
 class InputEmbedder(nn.Module):
     """
@@ -122,8 +121,8 @@ class InputEmbedder(nn.Module):
         tf_emb_j = self.linear_tf_z_j(tf)
 
         # [*, N_res, N_res, c_z]
-        pair_emb = tf_emb_i[..., None, :] + tf_emb_j[..., None, :, :]
-        pair_emb = pair_emb + self.relpos(ri.type(pair_emb.dtype))
+        pair_emb = self.relpos(ri.type(tf_emb_i.dtype))
+        pair_emb += tf_emb_i[..., None, :] + tf_emb_j[..., None, :, :]
 
         # [*, N_clust, N_res, c_m]
         n_clust = msa.shape[-3]
@@ -136,101 +135,6 @@ class InputEmbedder(nn.Module):
 
         return msa_emb, pair_emb
 
-
-class RecyclingEmbedder(nn.Module):
-    """
-    Embeds the output of an iteration of the model for recycling.
-
-    Implements Algorithm 32.
-    """
-
-    def __init__(
-        self,
-        c_m: int,
-        c_z: int,
-        min_bin: float,
-        max_bin: float,
-        no_bins: int,
-        inf: float = 1e8,
-        **kwargs,
-    ):
-        """
-        Args:
-            c_m:
-                MSA channel dimension
-            c_z:
-                Pair embedding channel dimension
-            min_bin:
-                Smallest distogram bin (Angstroms)
-            max_bin:
-                Largest distogram bin (Angstroms)
-            no_bins:
-                Number of distogram bins
-        """
-        super(RecyclingEmbedder, self).__init__()
-
-        self.c_m = c_m
-        self.c_z = c_z
-        self.min_bin = min_bin
-        self.max_bin = max_bin
-        self.no_bins = no_bins
-        self.inf = inf
-
-        self.linear = Linear(self.no_bins, self.c_z)
-        self.layer_norm_m = LayerNorm(self.c_m)
-        self.layer_norm_z = LayerNorm(self.c_z)
-
-    def forward(
-        self,
-        m: torch.Tensor,
-        z: torch.Tensor,
-        x: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            m:
-                First row of the MSA embedding. [*, N_res, C_m]
-            z:
-                [*, N_res, N_res, C_z] pair embedding
-            x:
-                [*, N_res, 3] predicted C_beta coordinates
-        Returns:
-            m:
-                [*, N_res, C_m] MSA embedding update
-            z:
-                [*, N_res, N_res, C_z] pair embedding update
-        """
-        bins = torch.linspace(
-            self.min_bin,
-            self.max_bin,
-            self.no_bins,
-            dtype=x.dtype,
-            device=x.device,
-            requires_grad=False,
-        )
-
-        # [*, N, C_m]
-        m_update = self.layer_norm_m(m)
-
-        # This squared method might become problematic in FP16 mode.
-        # I'm using it because my homegrown method had a stubborn discrepancy I
-        # couldn't find in time.
-        squared_bins = bins ** 2
-        upper = torch.cat(
-            [squared_bins[1:], squared_bins.new_tensor([self.inf])], dim=-1
-        )
-        d = torch.sum(
-            (x[..., None, :] - x[..., None, :, :]) ** 2, dim=-1, keepdims=True
-        )
-
-        # [*, N, N, no_bins]
-        d = ((d > squared_bins) * (d < upper)).type(x.dtype)
-
-        # [*, N, N, C_z]
-        d = self.linear(d)
-        z_update = d + self.layer_norm_z(z)
-
-        return m_update, z_update
 
 class TemplateEmbedder(nn.Module):
     def __init__(self, config):
@@ -249,6 +153,7 @@ class TemplateEmbedder(nn.Module):
         self.template_pointwise_att = TemplatePointwiseAttention(
             **config["template_pointwise_attention"],
         )
+
     
     def forward(self, 
         batch, 
@@ -256,11 +161,18 @@ class TemplateEmbedder(nn.Module):
         pair_mask, 
         templ_dim, 
         chunk_size, 
-        _mask_trans=True
+        _mask_trans=True,
+        inplace=False
     ):
         # Embed the templates one at a time (with a poor man's vmap)
         template_embeds = []
         n_templ = batch["template_aatype"].shape[templ_dim]
+
+        if isinstance(chunk_size, int) and 1 <= chunk_size <= 4:
+            t = torch.empty((n_templ, z.shape[0], z.shape[1], 64), dtype=z.dtype, device='cpu')
+        else:
+            t = torch.empty((n_templ, z.shape[0], z.shape[1], 64), dtype=z.dtype, device=z.device)
+
         for i in range(n_templ):
             idx = batch["template_aatype"].new_tensor(i)
             single_template_feats = tensor_tree_map(
@@ -280,46 +192,64 @@ class TemplateEmbedder(nn.Module):
                 single_template_embeds["angle"] = a
 
             # [*, S_t, N, N, C_t]
-            t = build_template_pair_feat(
+            tt = build_template_pair_feat(
                 single_template_feats,
                 use_unit_vector=self.config.use_unit_vector,
                 inf=self.config.inf,
+                chunk=chunk_size,
                 eps=self.config.eps,
                 **self.config.distogram,
-            ).to(z.dtype)
-            t = self.template_pair_embedder(t)
+            ).to(z.dtype).to(z.device)
 
-            single_template_embeds.update({"pair": t})
+            tt = self.template_pair_embedder(tt)
+            # single_template_embeds.update({"pair": t})
 
             template_embeds.append(single_template_embeds)
+
+            # [*, S_t, N, N, C_z]
+            if inplace:
+                tt = [tt]
+                t[i] = self.template_pair_stack.inplace(
+                    tt, 
+                    pair_mask.unsqueeze(-3).to(dtype=z.dtype), 
+                    chunk_size=chunk_size,
+                    _mask_trans=_mask_trans,
+                )[0].to(t.device)
+            else:
+                t[i] = self.template_pair_stack(
+                    tt, 
+                    pair_mask.unsqueeze(-3).to(dtype=z.dtype), 
+                    chunk_size=chunk_size,
+                    _mask_trans=_mask_trans,
+                ).to(t.device)
+
+        del tt, single_template_feats
 
         template_embeds = dict_multimap(
             partial(torch.cat, dim=templ_dim),
             template_embeds,
         )
 
-        # [*, S_t, N, N, C_z]
-        t = self.template_pair_stack(
-            template_embeds["pair"], 
-            pair_mask.unsqueeze(-3).to(dtype=z.dtype), 
-            chunk_size=chunk_size,
-            _mask_trans=_mask_trans,
-        )
-
         # [*, N, N, C_z]
-        t = self.template_pointwise_att(
-            t, 
-            z, 
-            template_mask=batch["template_mask"].to(dtype=z.dtype),
-            chunk_size=chunk_size,
-        )
-        t = t * (torch.sum(batch["template_mask"]) > 0)
+        if inplace:
+            z = self.template_pointwise_att.inplace(
+                t,
+                z,
+                template_mask=batch["template_mask"].to(dtype=z.dtype),
+                chunk_size=chunk_size * 256 if chunk_size is not None else chunk_size,
+            )
+        else:
+            z = self.template_pointwise_att(
+                t,
+                z,
+                template_mask=batch["template_mask"].to(dtype=z.dtype),
+                chunk_size=chunk_size * 256 if chunk_size is not None else chunk_size,
+            )
 
         ret = {}
+        ret["template_pair_embedding"] = z
         if self.config.embed_angles:
             ret["template_single_embedding"] = template_embeds["angle"]
-
-        ret.update({"template_pair_embedding": t})
 
         return ret
 
@@ -349,9 +279,9 @@ class TemplateAngleEmbedder(nn.Module):
         self.c_out = c_out
         self.c_in = c_in
 
-        self.linear_1 = Linear(self.c_in, self.c_out, init="relu")
+        self.linear_1 = Linear(self.c_in, self.c_out, initializer="relu")
         self.relu = nn.ReLU()
-        self.linear_2 = Linear(self.c_out, self.c_out, init="relu")
+        self.linear_2 = Linear(self.c_out, self.c_out, initializer="relu")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -393,7 +323,7 @@ class TemplatePairEmbedder(nn.Module):
         self.c_out = c_out
 
         # Despite there being no relu nearby, the source uses that initializer
-        self.linear = Linear(self.c_in, self.c_out, init="relu")
+        self.linear = Linear(self.c_in, self.c_out, initializer="relu")
 
     def forward(
         self,

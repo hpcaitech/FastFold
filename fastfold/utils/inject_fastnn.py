@@ -13,9 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import torch
-import torch.nn as nn
 
-from fastfold.model.fastnn import EvoformerBlock, ExtraMSABlock, TemplatePairStackBlock
+from fastfold.model.fastnn import EvoformerStack, ExtraMSAStack
+from fastfold.model.fastnn.embedders import TemplateEmbedder
+from fastfold.model.fastnn.embedders_multimer import TemplateEmbedderMultimer
+from fastfold.model.fastnn.ops import RecyclingEmbedder, InputEmbedder
+
+
 def copy_layernorm(model_fast, model_ori):
     model_fast.weight.copy_(model_ori.weight)
     model_fast.bias.copy_(model_ori.bias)
@@ -25,6 +29,14 @@ def copy_linear(model_fast, model_ori):
     model_fast.weight.copy_(model_ori.weight)
     if model_fast.use_bias:
         model_fast.bias.copy_(model_ori.bias)
+
+
+def copy_native_linear(model_fast, model_ori):
+    model_fast.weight.copy_(model_ori.weight)
+    try:
+        model_fast.bias.copy_(model_ori.bias)
+    except:
+        pass
 
 
 def copy_kv_linear(model_fast, ori_k, ori_v):
@@ -77,32 +89,41 @@ def copy_triangle_att(model_fast, model_ori):
     model_fast.out_bias.copy_(model_ori.mha.linear_o.bias)
 
 
+def copy_native_att(model_fast, model_ori):
+    copy_native_linear(model_fast.linear_q, model_ori.linear_q)
+    copy_native_linear(model_fast.linear_k, model_ori.linear_k)
+    copy_native_linear(model_fast.linear_v, model_ori.linear_v)
+    copy_native_linear(model_fast.linear_o, model_ori.linear_o)
+    if model_ori.gating:
+         copy_native_linear(model_fast.linear_g, model_ori.linear_g)
+
+
 def copy_evoformer_para(block_fast, block_ori):
     # msa_stack
     # MSARowAttentionWithPairBias
-    copy_layernorm(block_fast.msa_stack.MSARowAttentionWithPairBias.layernormM,
+    copy_layernorm(block_fast.msa.MSARowAttentionWithPairBias.layernormM,
                    block_ori.msa_att_row.layer_norm_m)
-    copy_layernorm(block_fast.msa_stack.MSARowAttentionWithPairBias.layernormZ,
+    copy_layernorm(block_fast.msa.MSARowAttentionWithPairBias.layernormZ,
                    block_ori.msa_att_row.layer_norm_z)
 
-    copy_attention(block_fast.msa_stack.MSARowAttentionWithPairBias.attention,
+    copy_attention(block_fast.msa.MSARowAttentionWithPairBias.attention,
                    block_ori.msa_att_row.mha)
 
-    block_fast.msa_stack.MSARowAttentionWithPairBias.linear_b_weights.copy_(
+    block_fast.msa.MSARowAttentionWithPairBias.linear_b_weights.copy_(
         block_ori.msa_att_row.linear_z.weight)
 
-    block_fast.msa_stack.MSARowAttentionWithPairBias.out_bias.copy_(
+    block_fast.msa.MSARowAttentionWithPairBias.out_bias.copy_(
         block_ori.msa_att_row.mha.linear_o.bias)
 
     # MSAColumnAttention
-    copy_layernorm(block_fast.msa_stack.MSAColumnAttention.layernormM,
+    copy_layernorm(block_fast.msa.MSAColumnAttention.layernormM,
                    block_ori.msa_att_col._msa_att.layer_norm_m)
 
-    copy_attention(block_fast.msa_stack.MSAColumnAttention.attention,
+    copy_attention(block_fast.msa.MSAColumnAttention.attention,
                    block_ori.msa_att_col._msa_att.mha)
 
     # MSATransition
-    copy_transition(block_fast.msa_stack.MSATransition, block_ori.core.msa_transition)
+    copy_transition(block_fast.msa.MSATransition, block_ori.core.msa_transition)
 
     # communication
     copy_layernorm(block_fast.communication.layernormM,
@@ -113,16 +134,16 @@ def copy_evoformer_para(block_fast, block_ori):
 
     # pair_stack
     # TriangleMultiplicationOutgoing
-    copy_triangle(block_fast.pair_stack.TriangleMultiplicationOutgoing, block_ori.core.tri_mul_out)
+    copy_triangle(block_fast.pair.TriangleMultiplicationOutgoing, block_ori.core.tri_mul_out)
     # TriangleMultiplicationIncoming
-    copy_triangle(block_fast.pair_stack.TriangleMultiplicationIncoming, block_ori.core.tri_mul_in)
+    copy_triangle(block_fast.pair.TriangleMultiplicationIncoming, block_ori.core.tri_mul_in)
 
     # TriangleAttentionStartingNode
-    copy_triangle_att(block_fast.pair_stack.TriangleAttentionStartingNode,
+    copy_triangle_att(block_fast.pair.TriangleAttentionStartingNode,
                       block_ori.core.tri_att_start)
-    copy_triangle_att(block_fast.pair_stack.TriangleAttentionEndingNode, block_ori.core.tri_att_end)
+    copy_triangle_att(block_fast.pair.TriangleAttentionEndingNode, block_ori.core.tri_att_end)
 
-    copy_transition(block_fast.pair_stack.PairTransition, block_ori.core.pair_transition)
+    copy_transition(block_fast.pair.PairTransition, block_ori.core.pair_transition)
 
 
 def copy_global_attention(model_fast, model_ori):
@@ -222,87 +243,175 @@ def copy_template_pair_stack_para(block_fast, block_ori):
     copy_transition(block_fast.PairTransition, block_ori.pair_transition)
 
 
+def copy_template_pair_block_para(fast_module, target_module):
+    with torch.no_grad():
+        for ori_block, fast_block in zip(target_module.blocks, fast_module.blocks):
+            copy_template_pair_stack_para(fast_block, ori_block)
+            if ori_block.training == False:
+                fast_block.eval()
+
+
+def copy_template_para(block_fast, block_ori):
+    # TemplateAngleEmbedder
+    copy_linear(block_fast.template_angle_embedder.linear_1, 
+                block_ori.template_angle_embedder.linear_1)
+    copy_linear(block_fast.template_angle_embedder.linear_2, 
+                block_ori.template_angle_embedder.linear_2)
+    
+    # TemplatePairEmbedder
+    copy_linear(block_fast.template_pair_embedder.linear, 
+                block_ori.template_pair_embedder.linear)
+    
+    # TemplatePairStack
+    copy_template_pair_block_para(block_fast.template_pair_stack, 
+                                  block_ori.template_pair_stack)
+    copy_layernorm(block_fast.template_pair_stack.layer_norm,
+                   block_ori.template_pair_stack.layer_norm)
+    
+    # TemplatePointwiseAttention
+    copy_native_att(block_fast.template_pointwise_att.mha,
+                    block_ori.template_pointwise_att.mha)
+
+
+def copy_template_multimer_para(block_fast, block_ori):
+    # TemplatePairEmbedderMultimer
+    copy_linear(block_fast.template_pair_embedder.dgram_linear, 
+                block_ori.template_pair_embedder.dgram_linear)
+    copy_linear(block_fast.template_pair_embedder.aatype_linear_1, 
+                block_ori.template_pair_embedder.aatype_linear_1)
+    copy_linear(block_fast.template_pair_embedder.aatype_linear_2, 
+                block_ori.template_pair_embedder.aatype_linear_2)
+    copy_layernorm(block_fast.template_pair_embedder.query_embedding_layer_norm, 
+                   block_ori.template_pair_embedder.query_embedding_layer_norm)
+    copy_linear(block_fast.template_pair_embedder.query_embedding_linear, 
+                block_ori.template_pair_embedder.query_embedding_linear)
+    copy_linear(block_fast.template_pair_embedder.pseudo_beta_mask_linear, 
+                block_ori.template_pair_embedder.pseudo_beta_mask_linear)
+    copy_linear(block_fast.template_pair_embedder.x_linear, 
+                block_ori.template_pair_embedder.x_linear)
+    copy_linear(block_fast.template_pair_embedder.y_linear, 
+                block_ori.template_pair_embedder.y_linear)
+    copy_linear(block_fast.template_pair_embedder.z_linear, 
+                block_ori.template_pair_embedder.z_linear)
+    copy_linear(block_fast.template_pair_embedder.backbone_mask_linear, 
+                block_ori.template_pair_embedder.backbone_mask_linear)
+    
+    # TemplateSingleEmbedderMultimer
+    copy_linear(block_fast.template_single_embedder.template_single_embedder, 
+                block_ori.template_single_embedder.template_single_embedder)
+    copy_linear(block_fast.template_single_embedder.template_projector, 
+                block_ori.template_single_embedder.template_projector)
+    
+    # TemplatePairStack
+    copy_template_pair_block_para(block_fast.template_pair_stack, 
+                                  block_ori.template_pair_stack)
+    copy_layernorm(block_fast.template_pair_stack.layer_norm,
+                   block_ori.template_pair_stack.layer_norm)
+    
+    # linear_t
+    copy_linear(block_fast.linear_t, block_ori.linear_t)
+
+
 def inject_evoformer(model):
     with torch.no_grad():
-        fastfold_blocks = nn.ModuleList()
-        for block_id, ori_block in enumerate(model.evoformer.blocks):
-            c_m = ori_block.msa_att_row.c_in
-            c_z = ori_block.msa_att_row.c_z
-            is_multimer = ori_block.is_multimer
-            fastfold_block = EvoformerBlock(c_m=c_m,
-                                            c_z=c_z,
-                                            first_block=(block_id == 0),
-                                            last_block=(block_id == len(model.evoformer.blocks) - 1),
-                                            is_multimer=is_multimer,
-                                        )
-
-            copy_evoformer_para(fastfold_block, ori_block)
-
-            fastfold_blocks.append(fastfold_block)
-
-        model.evoformer.blocks = fastfold_blocks
-
-    return model
+        target_module = model.evoformer
+        fast_module = EvoformerStack(
+            c_m=target_module.blocks[0].msa_att_row.c_in,
+            c_z=target_module.blocks[0].msa_att_row.c_z,
+            c_s=target_module.linear.out_features,
+            no_blocks=len(target_module.blocks),
+            blocks_per_ckpt=target_module.blocks_per_ckpt,
+            clear_cache_between_blocks=target_module.clear_cache_between_blocks,
+            is_multimer=target_module.blocks[0].is_multimer,
+        )
+        for target_block, fast_block in zip(target_module.blocks, fast_module.blocks):
+            copy_evoformer_para(fast_block, target_block)
+            if target_block.training == False:
+                fast_block.eval()
+        copy_linear(fast_module.linear, target_module.linear)
+        model.evoformer = fast_module
 
 
-def inject_extraMsaBlock(model):
+def inject_extramsa(model):
     with torch.no_grad():
-        new_model_blocks = nn.ModuleList()
-        for block_id, ori_block in enumerate(model.extra_msa_stack.blocks):
-            c_m = ori_block.msa_att_row.c_in
-            c_z = ori_block.msa_att_row.c_z
-            is_multimer = ori_block.is_multimer
-            new_model_block = ExtraMSABlock(
-                c_m=c_m,
-                c_z=c_z,
-                first_block=(block_id == 0),
-                last_block=(block_id == len(model.extra_msa_stack.blocks) - 1),
-                is_multimer=is_multimer
-            )
-
-            copy_extra_msa_para(new_model_block, ori_block)
-            if ori_block.training == False:
-                new_model_block.eval()
-            new_model_blocks.append(new_model_block)
-
-        model.extra_msa_stack.blocks = new_model_blocks
+        target_module = model.extra_msa_stack
+        fast_module = ExtraMSAStack(
+            c_m=target_module.blocks[0].msa_att_row.c_in,
+            c_z=target_module.blocks[0].msa_att_row.c_z,
+            no_blocks=len(target_module.blocks),
+            clear_cache_between_blocks=target_module.clear_cache_between_blocks,
+            is_multimer=target_module.blocks[0].is_multimer,
+        )
+        for target_block, fast_block in zip(target_module.blocks, fast_module.blocks):
+            copy_extra_msa_para(fast_block, target_block)
+            if target_block.training == False:
+                fast_block.eval()
+        model.extra_msa_stack = fast_module
 
 
-def inject_templatePairBlock(model):
+def inject_template(model):
     with torch.no_grad():
-        target_module = model.template_embedder.template_pair_stack.blocks
-        fastfold_blocks = nn.ModuleList()
-        for block_id, ori_block in enumerate(target_module):
-            c_t = ori_block.c_t
-            c_hidden_tri_att = ori_block.c_hidden_tri_att
-            c_hidden_tri_mul = ori_block.c_hidden_tri_mul
-            no_heads = ori_block.no_heads
-            pair_transition_n = ori_block.pair_transition_n
-            dropout_rate = ori_block.dropout_rate
-            inf = ori_block.inf
-            fastfold_block = TemplatePairStackBlock(
-                c_t=c_t,
-                c_hidden_tri_att=c_hidden_tri_att,
-                c_hidden_tri_mul=c_hidden_tri_mul,
-                no_heads=no_heads,
-                pair_transition_n=pair_transition_n,
-                dropout_rate=dropout_rate,
-                inf=inf,
-                first_block=(block_id == 0),
-                last_block=(block_id == len(target_module) - 1),
-            )
+        if model.evoformer.blocks[0].is_multimer:
+            target_module = model.template_embedder
+            fast_module = TemplateEmbedderMultimer(config=model.template_embedder.config)
+            copy_template_multimer_para(fast_module, target_module)
+            if target_module.training == False:
+                fast_module.eval()
+            model.template_embedder = fast_module
+        else:
+            target_module = model.template_embedder
+            fast_module = TemplateEmbedder(config=model.template_embedder.config)
+            copy_template_para(fast_module, target_module)
+            if target_module.training == False:
+                fast_module.eval()
+            model.template_embedder = fast_module
 
-            copy_template_pair_stack_para(fastfold_block, ori_block)
 
-            if ori_block.training == False:
-                fastfold_block.eval()
-            fastfold_blocks.append(fastfold_block)
+def inject_embedder(model):
+    if model.evoformer.blocks[0].is_multimer:
+        return
+ 
+    # recycle embedder
+    with torch.no_grad():
+        target_module = model.recycling_embedder
+        fast_module = RecyclingEmbedder(
+            c_m=target_module.c_m,
+            c_z=target_module.c_z,
+            min_bin=target_module.min_bin,
+            max_bin=target_module.max_bin,
+            no_bins=target_module.no_bins,
+            inf=target_module.inf
+        )
+        copy_native_linear(fast_module.linear, target_module.linear)
+        copy_layernorm(fast_module.layer_norm_m, target_module.layer_norm_m)
+        copy_layernorm(fast_module.layer_norm_z, target_module.layer_norm_z)
+        if target_module.training == False:
+            fast_module.eval()
+        model.recycling_embedder = fast_module
 
-        model.template_embedder.template_pair_stack.blocks = fastfold_blocks
+    # input embedder
+    with torch.no_grad():
+        target_module = model.input_embedder
+        fast_module = InputEmbedder(
+            tf_dim=target_module.tf_dim,
+            msa_dim=target_module.msa_dim,
+            c_z=target_module.c_z,
+            c_m=target_module.c_m,
+            relpos_k=target_module.relpos_k,
+        )
+        copy_linear(fast_module.linear_tf_z_i, target_module.linear_tf_z_i)
+        copy_linear(fast_module.linear_tf_z_j, target_module.linear_tf_z_j)
+        copy_linear(fast_module.linear_tf_m, target_module.linear_tf_m)
+        copy_linear(fast_module.linear_msa_m, target_module.linear_msa_m)
+        copy_linear(fast_module.linear_relpos, target_module.linear_relpos)
+        if target_module.training == False:
+            fast_module.eval()
+        model.input_embedder = fast_module
 
 
 def inject_fastnn(model):
     inject_evoformer(model)
-    inject_extraMsaBlock(model)
-    inject_templatePairBlock(model)
+    inject_extramsa(model)
+    inject_template(model)
+    inject_embedder(model)
     return model

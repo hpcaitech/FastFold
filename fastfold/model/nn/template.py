@@ -122,26 +122,11 @@ class TemplatePointwiseAttention(nn.Module):
         # [*, N_res, N_res, 1, C_z]
         biases = [bias]
         if chunk_size is not None:
-            para_dim_t0 = t.shape[0]
-            para_dim_t1 = t.shape[1]
-            chunk_size_t = chunk_size * 4
-            mask = torch.sum(template_mask.to(z.device)) > 0
-
-            for ti in range(0, para_dim_t0, chunk_size_t):
-                t0 = t[ti:ti + chunk_size_t, :, :, :]
-                t0 = t0.to(z.device)
-                para_dim_t_part = t0.shape[0]
-                for i in range(0, para_dim_t_part, chunk_size):
-                    for j in range(0, para_dim_t1, chunk_size):
-                        z[i:i + chunk_size, j:j + chunk_size, :, :] += self.mha(
-                            q_x=z[i + ti:i + ti + chunk_size, j:j + chunk_size, :, :], kv_x=t0[i:i + chunk_size, j:j + chunk_size, :, :], biases=biases
-                            ) * mask
+            z = self._chunk(z, t, biases, chunk_size)
         else:
-            t = self.mha(q_x=z, kv_x=t, biases=biases)
-            # [*, N_res, N_res, C_z]
-            t = t * (torch.sum(template_mask) > 0)
-            z = z + t
-            
+            z = self.mha(q_x=z, kv_x=t, biases=biases)
+
+        # [*, N_res, N_res, C_z]
         z = z.squeeze(-2)
 
         return z
@@ -368,48 +353,7 @@ class TemplatePairStack(nn.Module):
             args=(t,),
             blocks_per_ckpt=self.blocks_per_ckpt if self.training else None,
         )
-        if chunk_size is None:
-            chunk_size = t.shape[0]
-        for i in range(0, t.shape[0], chunk_size):
-            t[i:i + chunk_size] = self.layer_norm(t[i:i + chunk_size])
-        return t
-    
-    def inplace(
-        self,
-        t: torch.tensor,
-        mask: torch.tensor,
-        chunk_size: int,
-        _mask_trans: bool = True,
-    ):
-        """
-        Args:
-            t:
-                [*, N_templ, N_res, N_res, C_t] template embedding
-            mask:
-                [*, N_templ, N_res, N_res] mask
-        Returns:
-            [*, N_templ, N_res, N_res, C_t] template embedding update
-        """
-        if(mask.shape[-3] == 1):
-            expand_idx = list(mask.shape)
-            expand_idx[-3] = t[0].shape[-4]
-            mask = mask.expand(*expand_idx)
 
-        t, = checkpoint_blocks(
-            blocks=[
-                partial(
-                    b.inplace,
-                    mask=mask,
-                    chunk_size=chunk_size,
-                    _mask_trans=_mask_trans,
-                )
-                for b in self.blocks
-            ],
-            args=(t,),
-            blocks_per_ckpt=self.blocks_per_ckpt if self.training else None,
-        )
-        if chunk_size is None:
-            chunk_size = t[0].shape[0]
-        for i in range(0, t[0].shape[0], chunk_size):
-            t[0][i:i + chunk_size] = self.layer_norm(t[0][i:i + chunk_size].to(mask.device)).to(t[0].device)
+        t = self.layer_norm(t)
+
         return t
