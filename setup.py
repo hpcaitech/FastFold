@@ -129,7 +129,7 @@ else:
 
 setup(
     name='fastfold',
-    version='0.1.0',
+    version='0.2.0',
     packages=find_packages(exclude=(
         'assets',
         'benchmark',
@@ -140,5 +140,5 @@ setup(
     ext_modules=ext_modules,
     package_data={'fastfold': ['model/fastnn/kernel/cuda_native/csrc/*']},
     cmdclass={'build_ext': BuildExtension} if ext_modules else {},
-    install_requires=['einops'],
+    install_requires=['einops', 'colossalai'],
 )

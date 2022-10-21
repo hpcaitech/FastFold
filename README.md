@@ -18,7 +18,8 @@ FastFold provides a **high-performance implementation of Evoformer** with the fo
 3. Ease of use
     * Huge performance gains with a few lines changes
     * You don't need to care about how the parallel part is implemented
-4. Faster data processing, about 3x times faster than the original way
+4. Faster data processing, about 3x times faster on monomer, about 3Nx times faster on multimer with N sequence.
+5. Great Reduction on GPU memory
 
 ## Installation
 
@@ -42,8 +43,21 @@ conda activate fastfold
 python setup.py install
 ```
 
+#### Advanced
+
+To leverage the power of FastFold, we recommend you build [Triton]() from source.
+** [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) 11.4 or above is needed. **
+
+```bash
+git clone https://github.com/openai/triton.git ~/triton
+cd ~/triton/python
+pip install -e .
+```
+
+
 ### Using PyPi
 You can download FastFold with pre-built CUDA extensions.
+Warning, only stable versions available.
 
 ```shell
 pip install fastfold -f https://release.colossalai.org/fastfold
