@@ -16,6 +16,7 @@ import torch
 
 from fastfold.model.fastnn import EvoformerStack, ExtraMSAStack
 from fastfold.model.fastnn.embedders import TemplateEmbedder
+from fastfold.model.fastnn.embedders_multimer import TemplateEmbedderMultimer
 from fastfold.model.fastnn.ops import RecyclingEmbedder, InputEmbedder
 
 
@@ -272,6 +273,45 @@ def copy_template_para(block_fast, block_ori):
                     block_ori.template_pointwise_att.mha)
 
 
+def copy_template_multimer_para(block_fast, block_ori):
+    # TemplatePairEmbedderMultimer
+    copy_linear(block_fast.template_pair_embedder.dgram_linear, 
+                block_ori.template_pair_embedder.dgram_linear)
+    copy_linear(block_fast.template_pair_embedder.aatype_linear_1, 
+                block_ori.template_pair_embedder.aatype_linear_1)
+    copy_linear(block_fast.template_pair_embedder.aatype_linear_2, 
+                block_ori.template_pair_embedder.aatype_linear_2)
+    copy_layernorm(block_fast.template_pair_embedder.query_embedding_layer_norm, 
+                   block_ori.template_pair_embedder.query_embedding_layer_norm)
+    copy_linear(block_fast.template_pair_embedder.query_embedding_linear, 
+                block_ori.template_pair_embedder.query_embedding_linear)
+    copy_linear(block_fast.template_pair_embedder.pseudo_beta_mask_linear, 
+                block_ori.template_pair_embedder.pseudo_beta_mask_linear)
+    copy_linear(block_fast.template_pair_embedder.x_linear, 
+                block_ori.template_pair_embedder.x_linear)
+    copy_linear(block_fast.template_pair_embedder.y_linear, 
+                block_ori.template_pair_embedder.y_linear)
+    copy_linear(block_fast.template_pair_embedder.z_linear, 
+                block_ori.template_pair_embedder.z_linear)
+    copy_linear(block_fast.template_pair_embedder.backbone_mask_linear, 
+                block_ori.template_pair_embedder.backbone_mask_linear)
+    
+    # TemplateSingleEmbedderMultimer
+    copy_linear(block_fast.template_single_embedder.template_single_embedder, 
+                block_ori.template_single_embedder.template_single_embedder)
+    copy_linear(block_fast.template_single_embedder.template_projector, 
+                block_ori.template_single_embedder.template_projector)
+    
+    # TemplatePairStack
+    copy_template_pair_block_para(block_fast.template_pair_stack, 
+                                  block_ori.template_pair_stack)
+    copy_layernorm(block_fast.template_pair_stack.layer_norm,
+                   block_ori.template_pair_stack.layer_norm)
+    
+    # linear_t
+    copy_linear(block_fast.linear_t, block_ori.linear_t)
+
+
 def inject_evoformer(model):
     with torch.no_grad():
         target_module = model.evoformer
@@ -311,12 +351,20 @@ def inject_extramsa(model):
 
 def inject_template(model):
     with torch.no_grad():
-        target_module = model.template_embedder
-        fast_module = TemplateEmbedder(config=model.template_embedder.config)
-        copy_template_para(fast_module, target_module)
-        if target_module.training == False:
-            fast_module.eval()
-        model.template_embedder = fast_module
+        if model.evoformer.blocks[0].is_multimer:
+            target_module = model.template_embedder
+            fast_module = TemplateEmbedderMultimer(config=model.template_embedder.config)
+            copy_template_multimer_para(fast_module, target_module)
+            if target_module.training == False:
+                fast_module.eval()
+            model.template_embedder = fast_module
+        else:
+            target_module = model.template_embedder
+            fast_module = TemplateEmbedder(config=model.template_embedder.config)
+            copy_template_para(fast_module, target_module)
+            if target_module.training == False:
+                fast_module.eval()
+            model.template_embedder = fast_module
 
 
 def inject_embedder(model):

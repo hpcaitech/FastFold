@@ -7,8 +7,8 @@ from typing import Tuple, Dict
 from fastfold.utils import all_atom_multimer
 from fastfold.utils.feats import dgram_from_positions
 
-from fastfold.model.nn.primitives import Linear, LayerNorm
-from fastfold.model.nn.template import (
+from fastfold.model.fastnn.ops import Linear, LayerNorm
+from fastfold.model.fastnn.template import (
     TemplatePairStack,
     TemplatePointwiseAttention,
 )
