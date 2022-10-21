@@ -78,4 +78,4 @@ def _test_template_embedder(rank, world_size, chunk_size, inplace, get_openfold_
             z_fast = z.cuda() + template_embeds["template_pair_embedding"]
 
     error = torch.mean(torch.abs(z_out.cuda() - z_fast))
-    assert error < 1e-5, f"Test z failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {error}"
+    assert error < 5e-4, f"Test z failed at chunk size: {chunk_size}, inplace: {inplace}. The position dif is {error}"
