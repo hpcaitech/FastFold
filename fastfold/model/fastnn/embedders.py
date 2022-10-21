@@ -231,12 +231,20 @@ class TemplateEmbedder(nn.Module):
         )
 
         # [*, N, N, C_z]
-        z = self.template_pointwise_att(
-            t,
-            z,
-            template_mask=batch["template_mask"].to(dtype=z.dtype),
-            chunk_size=chunk_size * 256 if chunk_size is not None else chunk_size,
-        )
+        if inplace:
+            z = self.template_pointwise_att.inplace(
+                t,
+                z,
+                template_mask=batch["template_mask"].to(dtype=z.dtype),
+                chunk_size=chunk_size * 256 if chunk_size is not None else chunk_size,
+            )
+        else:
+            z = self.template_pointwise_att(
+                t,
+                z,
+                template_mask=batch["template_mask"].to(dtype=z.dtype),
+                chunk_size=chunk_size * 256 if chunk_size is not None else chunk_size,
+            )
 
         ret = {}
         ret["template_pair_embedding"] = z

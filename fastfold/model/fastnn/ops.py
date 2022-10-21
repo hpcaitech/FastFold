@@ -1166,7 +1166,7 @@ class GlobalAttention(nn.Module):
             q = torch.sum(m_part * mask_part.unsqueeze(-1), dim=-2) / (
                 torch.sum(mask_part, dim=-1)[..., None] + self.eps
             )
-
+            q = q * self.scaling
             q = self.to_q(q)
             q = q.view(q.shape[:-1] + (self.n_head, -1))
 
@@ -1189,3 +1189,102 @@ class GlobalAttention(nn.Module):
         m = torch.cat(output, dim=1)
 
         return m
+
+
+class InputEmbedder(nn.Module):
+    """
+    Embeds a subset of the input features.
+
+    Implements Algorithms 3 (InputEmbedder) and 4 (relpos).
+    """
+
+    def __init__(
+        self,
+        tf_dim: int,
+        msa_dim: int,
+        c_z: int,
+        c_m: int,
+        relpos_k: int,
+        **kwargs,
+    ):
+        """
+        Args:
+            tf_dim:
+                Final dimension of the target features
+            msa_dim:
+                Final dimension of the MSA features
+            c_z:
+                Pair embedding dimension
+            c_m:
+                MSA embedding dimension
+            relpos_k:
+                Window size used in relative positional encoding
+        """
+        super(InputEmbedder, self).__init__()
+
+        self.tf_dim = tf_dim
+        self.msa_dim = msa_dim
+
+        self.c_z = c_z
+        self.c_m = c_m
+
+        self.linear_tf_z_i = Linear(tf_dim, c_z)
+        self.linear_tf_z_j = Linear(tf_dim, c_z)
+        self.linear_tf_m = Linear(tf_dim, c_m)
+        self.linear_msa_m = Linear(msa_dim, c_m)
+
+        # RPE stuff
+        self.relpos_k = relpos_k
+        self.no_bins = 2 * relpos_k + 1
+        self.linear_relpos = Linear(self.no_bins, c_z)
+
+    def forward(
+        self,
+        tf: torch.Tensor,
+        ri: torch.Tensor,
+        msa: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            tf:
+                "target_feat" features of shape [*, N_res, tf_dim]
+            ri:
+                "residue_index" features of shape [*, N_res]
+            msa:
+                "msa_feat" features of shape [*, N_clust, N_res, msa_dim]
+        Returns:
+            msa_emb:
+                [*, N_clust, N_res, C_m] MSA embedding
+            pair_emb:
+                [*, N_res, N_res, C_z] pair embedding
+
+        """
+        # [*, N_res, c_z]
+        tf_emb_i = self.linear_tf_z_i(tf)
+        tf_emb_j = self.linear_tf_z_j(tf)
+
+        # [*, N_res, N_res, c_z]        
+        ri = ri.type(tf_emb_i.dtype)
+        d = ri[..., None] - ri[..., None, :]
+        boundaries = torch.arange(
+            start=-self.relpos_k, end=self.relpos_k + 1, device=d.device
+        )
+
+        reshaped_bins = boundaries.view(((1,) * len(d.shape)) + (len(boundaries),))
+        pair_emb = d[..., None] - reshaped_bins
+        pair_emb = torch.argmin(torch.abs(pair_emb), dim=-1)
+        pair_emb = nn.functional.one_hot(pair_emb, num_classes=len(boundaries)).float().type(ri.dtype)
+        pair_emb = self.linear_relpos(pair_emb)
+        pair_emb += tf_emb_i[..., None, :]
+        pair_emb += tf_emb_j[..., None, :, :]
+
+        # [*, N_clust, N_res, c_m]
+        n_clust = msa.shape[-3]
+        tf_m = (
+            self.linear_tf_m(tf)
+            .unsqueeze(-3)
+            .expand(((-1,) * len(tf.shape[:-2]) + (n_clust, -1, -1)))
+        )
+        msa_emb = self.linear_msa_m(msa) + tf_m
+
+        return msa_emb, pair_emb
