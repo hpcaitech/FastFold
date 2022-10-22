@@ -19,7 +19,7 @@ FastFold provides a **high-performance implementation of Evoformer** with the fo
     * Huge performance gains with a few lines changes
     * You don't need to care about how the parallel part is implemented
 4. Faster data processing, about 3x times faster on monomer, about 3Nx times faster on multimer with N sequence.
-5. Great Reduction on GPU memory
+5. Great Reduction on GPU memory, able to inference sequence containing more than **10000** residues.
 
 ## Installation
 
@@ -46,7 +46,8 @@ python setup.py install
 #### Advanced
 
 To leverage the power of FastFold, we recommend you build [Triton]() from source.
-** [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) 11.4 or above is needed. **
+
+**[NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) 11.4 or above is needed.**
 
 ```bash
 git clone https://github.com/openai/triton.git ~/triton
@@ -57,6 +58,7 @@ pip install -e .
 
 ### Using PyPi
 You can download FastFold with pre-built CUDA extensions.
+
 Warning, only stable versions available.
 
 ```shell
@@ -161,7 +163,9 @@ python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
 Alphafold's embedding presentations take up a lot of memory as the sequence length increases. To reduce memory usage, 
 you should add parameter `--chunk_size [N]` and `--inplace` to cmdline or shell script `./inference.sh`. 
 The smaller you set N, the less memory will be used, but it will affect the speed. We can inference 
-a sequence of length 7000 in fp32 on a 80G A100.
+a sequence of length 10000 in bf16 with 61GB memory on a Nvidia A100(80GB). For fp32, the max length is 8000.
+> You need to set `PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:15000` to inference such an extreme long sequence.
+
 ```shell
 python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
     --output_dir ./ \
