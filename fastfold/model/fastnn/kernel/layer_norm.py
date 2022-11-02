@@ -34,7 +34,7 @@ class FusedLayerNorm(torch.nn.Module):
         torch.nn.init.zeros_(self.bias)
 
     def forward(self, input):
-        if input.shape[-3] > 4000:
+        if len(input.shape) >= 3 and input.shape[-3] > 4000:
             out = torch.empty_like(input)
             chunk_size = int(4000 * 4000 / input.shape[-3])
             if len(input.shape) == 3:
