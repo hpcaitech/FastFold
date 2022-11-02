@@ -34,6 +34,23 @@ class FusedLayerNorm(torch.nn.Module):
         torch.nn.init.zeros_(self.bias)
 
     def forward(self, input):
+        if input.shape[-3] > 4000:
+            out = torch.empty_like(input)
+            chunk_size = int(4000 * 4000 / input.shape[-3])
+            if len(input.shape) == 3:
+                for i in range(0, input.shape[-3], chunk_size):
+                    out[i:i + chunk_size] = self.kernel_forward(input[i:i + chunk_size])
+            elif len(input.shape) == 4:
+                for j in range(0, input.shape[-4], chunk_size):               
+                    for i in range(0, input.shape[-3], chunk_size):
+                        out[j, i:i + chunk_size] = self.kernel_forward(input[j, i:i + chunk_size])
+            else:
+                raise RuntimeError("Shape" + input.shape + "not implemented for layernorm yet!")
+            return out
+        else:
+            return self.kernel_forward(input)
+
+    def kernel_forward(self, input):
         if _triton_available:
             return LayerNormTritonFunc.apply(input, self.normalized_shape, self.weight, self.bias,
                                              self.eps)

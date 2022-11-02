@@ -199,7 +199,7 @@ class TemplateEmbedder(nn.Module):
                 chunk=chunk_size,
                 eps=self.config.eps,
                 **self.config.distogram,
-            ).to(z.dtype).to(z.device)
+            ).to(z.dtype)
 
             tt = self.template_pair_embedder(tt)
             # single_template_embeds.update({"pair": t})

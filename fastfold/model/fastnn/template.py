@@ -275,7 +275,7 @@ class TemplatePairBlock(nn.Module):
         chunk_size: Optional[int] = None,
         _mask_trans: bool = True,
     ):
-        if isinstance(chunk_size, int) and 1 <= chunk_size <= 4:
+        if isinstance(chunk_size, int) and 1 <= chunk_size <= 4 and z[0].device != "cpu":
             z[0] = z[0].cpu()
         dap_size = gpc.get_world_size(ParallelMode.TENSOR)
 
@@ -310,8 +310,6 @@ class TemplatePairBlock(nn.Module):
 
         # z = torch.cat(single_templates, dim=-4)
         if self.last_block:
-            if isinstance(chunk_size, int) and 1 <= chunk_size <= 4:
-                z[0] = z[0].to(mask.device)
             z[0] = gather(z[0], dim=1)
             z[0] = z[0][:, :-padding_size, :-padding_size, :]
 
@@ -408,15 +406,9 @@ class TemplatePairStack(nn.Module):
             args=(t,),
             blocks_per_ckpt=self.blocks_per_ckpt if self.training else None,
         )
-        if chunk_size is None:
-            chunk_size = t.shape[0]
-        for i in range(0, t.shape[0], chunk_size):
-            if t.shape[1] > 4000:
-                chunk_new = int(4000 * 4000 / t.shape[1])
-                for j in range(0, t.shape[1], chunk_new):
-                    t[i:i + chunk_size, j:j + chunk_new] = self.layer_norm(t[i:i + chunk_size, j:j + chunk_new])
-            else:
-                t[i:i + chunk_size] = self.layer_norm(t[i:i + chunk_size])
+
+        for i in range(0, t.shape[0]):
+            t[i] = self.layer_norm(t[i])
         return t
     
     def inplace(
@@ -453,13 +445,7 @@ class TemplatePairStack(nn.Module):
             args=(t,),
             blocks_per_ckpt=self.blocks_per_ckpt if self.training else None,
         )
-        if chunk_size is None:
-            chunk_size = t[0].shape[0]
-        for i in range(0, t[0].shape[0], chunk_size):
-            if t[0].shape[1] > 4000:
-                chunk_new = int(4000 * 4000 / t[0].shape[1])
-                for j in range(0, t[0].shape[1], chunk_new):
-                    t[0][i:i + chunk_size, j:j + chunk_new] = self.layer_norm(t[0][i:i + chunk_size, j:j + chunk_new].to(mask.device)).to(t[0].device)
-            else:
-                t[0][i:i + chunk_size] = self.layer_norm(t[0][i:i + chunk_size].to(mask.device)).to(t[0].device)
+
+        for i in range(0, t[0].shape[0]):
+            t[0][i] = self.layer_norm(t[0][i].to(mask.device)).to(t[0].device)
         return t
