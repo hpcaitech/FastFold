@@ -23,11 +23,9 @@ FastFold provides a **high-performance implementation of Evoformer** with the fo
 
 ## Installation
 
-To install and use FastFold, you will need:
+To install FastFold, you will need:
 + Python 3.8 or 3.9.
-+ [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) 11.1 or above
-+ PyTorch 1.10 or above 
-
++ [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) 11.3 or above
 
 For now, You can install FastFold:
 ### Using Conda (Recommended)
@@ -47,12 +45,10 @@ python setup.py install
 
 To leverage the power of FastFold, we recommend you build [Triton]() from source.
 
-**[NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) 11.4 or above is needed.**
+**[NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) 11.3 or above is needed.**
 
 ```bash
-git clone https://github.com/openai/triton.git ~/triton
-cd ~/triton/python
-pip install -e .
+pip install triton==2.0.0.dev20221005
 ```
 
 
