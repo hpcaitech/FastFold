@@ -240,26 +240,18 @@ class TemplatePairBlock(nn.Module):
             z = scatter(z, dim=1)
 
         mask = torch.nn.functional.pad(mask, (0, padding_size, 0, padding_size))
+        single_mask_row = scatter(mask, dim=1)
+        single_mask_col = scatter(mask, dim=2)
 
-        # single_templates = [t.unsqueeze(-4) for t in torch.unbind(z, dim=-4)]
-        # single_templates_masks = [m.unsqueeze(-3) for m in torch.unbind(mask, dim=-3)]
-        for i in range(z.shape[0]):
-            single = z[i].unsqueeze(-4)
-            single_mask = mask[i].unsqueeze(-3)
-
-            single_mask_row = scatter(single_mask, dim=1)
-            single_mask_col = scatter(single_mask, dim=2)
-
-            single = self.TriangleAttentionStartingNode(single, single_mask_row)
-            single = row_to_col(single)
-            single = self.TriangleAttentionEndingNode(single, single_mask_col)
-            single = col_to_row(single)
-            single = self.TriangleMultiplicationOutgoing(single, single_mask_row)
-            single = row_to_col(single)
-            single = self.TriangleMultiplicationIncoming(single, single_mask_col)
-            single = self.PairTransition(single)
-            single = col_to_row(single)
-            z[i] = single
+        z = self.TriangleAttentionStartingNode(z, single_mask_row)
+        z = row_to_col(z)
+        z = self.TriangleAttentionEndingNode(z, single_mask_col)
+        z = col_to_row(z)
+        z = self.TriangleMultiplicationOutgoing(z, single_mask_row)
+        z = row_to_col(z)
+        z = self.TriangleMultiplicationIncoming(z, single_mask_col)
+        z = self.PairTransition(z)
+        z = col_to_row(z)
 
         # z = torch.cat(single_templates, dim=-4)
         if self.last_block:
@@ -275,10 +267,7 @@ class TemplatePairBlock(nn.Module):
         chunk_size: Optional[int] = None,
         _mask_trans: bool = True,
     ):
-        if isinstance(chunk_size, int) and 1 <= chunk_size <= 4 and z[0].device != "cpu":
-            z[0] = z[0].cpu()
         dap_size = gpc.get_world_size(ParallelMode.TENSOR)
-
         seq_length = mask.size(-1)
         padding_size = (int(seq_length / dap_size) + 1) * dap_size - seq_length
 
@@ -287,26 +276,18 @@ class TemplatePairBlock(nn.Module):
             z[0] = scatter(z[0], dim=1)
 
         mask = torch.nn.functional.pad(mask, (0, padding_size, 0, padding_size))
+        single_mask_row = scatter(mask, dim=1)
+        single_mask_col = scatter(mask, dim=2)
 
-        # single_templates = [t.unsqueeze(-4) for t in torch.unbind(z, dim=-4)]
-        # single_templates_masks = [m.unsqueeze(-3) for m in torch.unbind(mask, dim=-3)]
-        for i in range(z[0].shape[0]):
-            single = z[0][i].unsqueeze(-4).to(mask.device)
-            single_mask = mask[i].unsqueeze(-3)
-
-            single_mask_row = scatter(single_mask, dim=1)
-            single_mask_col = scatter(single_mask, dim=2)
-
-            single = self.TriangleAttentionStartingNode(single, single_mask_row)
-            single = row_to_col(single)
-            single = self.TriangleAttentionEndingNode(single, single_mask_col)
-            single = col_to_row(single)
-            single = self.TriangleMultiplicationOutgoing(single, single_mask_row)
-            single = row_to_col(single)
-            single = self.TriangleMultiplicationIncoming(single, single_mask_col)
-            single = self.PairTransition(single)
-            single = col_to_row(single)
-            z[0][i] = single.to(z[0].device)
+        z = self.TriangleAttentionStartingNode.inplace(z, single_mask_row)
+        z[0] = row_to_col(z[0])
+        z = self.TriangleAttentionEndingNode.inplace(z, single_mask_col)
+        z[0] = col_to_row(z[0])
+        z[0] = self.TriangleMultiplicationOutgoing(z[0], single_mask_row)
+        z[0] = row_to_col(z[0])
+        z[0] = self.TriangleMultiplicationIncoming(z[0], single_mask_col)
+        z = self.PairTransition.inplace(z)
+        z[0] = col_to_row(z[0])
 
         # z = torch.cat(single_templates, dim=-4)
         if self.last_block:
