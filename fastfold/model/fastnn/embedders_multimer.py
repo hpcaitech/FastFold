@@ -358,7 +358,6 @@ class TemplateEmbedderMultimer(nn.Module):
                 )
             )
             template_embeds.append(single_template_embeds)
-            print(1)
 
         template_embeds = dict_multimap(
             partial(torch.cat, dim=templ_dim),
@@ -367,7 +366,7 @@ class TemplateEmbedderMultimer(nn.Module):
 
         template_embeds["template_pair_embedding"] = template_pair_embedding
         del template_pair_embedding
-        print(2)
+
         if not inplace:
             # [*, S_t, N, N, C_z]
             template_embeds["template_pair_embedding"] = self.template_pair_stack(
@@ -385,10 +384,10 @@ class TemplateEmbedderMultimer(nn.Module):
                 chunk_size=chunk_size,
                 _mask_trans=False,
             )[0].to(z.device)
-        print(3)
+
         # [*, N, N, C_z]
         template_embeds["template_pair_embedding"] = torch.sum(template_embeds["template_pair_embedding"], dim=-4) / n_templ
         template_embeds["template_pair_embedding"] = torch.nn.functional.relu(template_embeds["template_pair_embedding"])
         template_embeds["template_pair_embedding"] = self.linear_t(template_embeds["template_pair_embedding"])
-        print(4)
+
         return template_embeds
