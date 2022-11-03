@@ -46,7 +46,7 @@ def get_openfold_module_and_data():
 
 
 @pytest.mark.parametrize('world_size', [1, 2])
-@pytest.mark.parametrize('chunk_size', [None, 32])
+@pytest.mark.parametrize('chunk_size', [None, 4]) # should set 4 to test offload
 @pytest.mark.parametrize('inplace', [False, True])
 def test_state_dict(world_size, chunk_size, inplace, get_openfold_module_and_data): 
     run_func = partial(_test_template_embedder, world_size=world_size, chunk_size=chunk_size, 

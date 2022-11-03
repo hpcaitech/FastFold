@@ -300,6 +300,7 @@ class TemplateEmbedderMultimer(nn.Module):
     ):
         template_embeds = []
         n_templ = batch["template_aatype"].shape[templ_dim]
+        template_pair_embeddings = torch.zeros((z.shape[0], z.shape[1], 64), dtype=z.dtype, device=z.device)
         for i in range(n_templ):
             idx = batch["template_aatype"].new_tensor(i)
             single_template_feats = tensor_tree_map(
@@ -336,7 +337,7 @@ class TemplateEmbedderMultimer(nn.Module):
             rigid_vec = rigid[..., None].inverse().apply_to_point(points)
             unit_vector = rigid_vec.normalized()
 
-            pair_act = self.template_pair_embedder(
+            pair_embedding = self.template_pair_embedder(
                 template_dgram,
                 aatype_one_hot,
                 z,
@@ -345,8 +346,24 @@ class TemplateEmbedderMultimer(nn.Module):
                 multichain_mask_2d,
                 unit_vector,
             )
-
-            single_template_embeds["template_pair_embedding"] = pair_act
+            
+            if not inplace:
+                # [*, S_t, N, N, C_z]
+                template_pair_embeddings = template_pair_embeddings + self.template_pair_stack(
+                    pair_embedding, 
+                    padding_mask_2d.unsqueeze(-3).to(dtype=z.dtype), 
+                    chunk_size=chunk_size,
+                    _mask_trans=False,
+                ).squeeze(0)
+            else:
+                # [*, S_t, N, N, C_z]
+                template_pair_embeddings += self.template_pair_stack.inplace(
+                    [pair_embedding], 
+                    padding_mask_2d.unsqueeze(-3).to(dtype=z.dtype), 
+                    chunk_size=chunk_size,
+                    _mask_trans=False,
+                )[0].squeeze(0)
+            
             single_template_embeds.update(
                 self.template_single_embedder(
                     single_template_feats,
@@ -361,27 +378,10 @@ class TemplateEmbedderMultimer(nn.Module):
             template_embeds,
         )
 
-        if not inplace:
-            # [*, S_t, N, N, C_z]
-            template_embeds["template_pair_embedding"] = self.template_pair_stack(
-                template_embeds["template_pair_embedding"], 
-                padding_mask_2d.unsqueeze(-3).to(dtype=z.dtype), 
-                chunk_size=chunk_size,
-                _mask_trans=False,
-            )
-        else:
-            template_embeds["template_pair_embedding"] = [template_embeds["template_pair_embedding"]]
-            # [*, S_t, N, N, C_z]
-            template_embeds["template_pair_embedding"] = self.template_pair_stack.inplace(
-                template_embeds["template_pair_embedding"], 
-                padding_mask_2d.unsqueeze(-3).to(dtype=z.dtype), 
-                chunk_size=chunk_size,
-                _mask_trans=False,
-            )[0].to(z.device)
-
         # [*, N, N, C_z]
-        template_embeds["template_pair_embedding"] = torch.sum(template_embeds["template_pair_embedding"], dim=-4) / n_templ
-        template_embeds["template_pair_embedding"] = torch.nn.functional.relu(template_embeds["template_pair_embedding"])
-        template_embeds["template_pair_embedding"] = self.linear_t(template_embeds["template_pair_embedding"])
-
+        template_pair_embeddings = template_pair_embeddings / n_templ
+        template_pair_embeddings = torch.nn.functional.relu(template_pair_embeddings)
+        template_pair_embeddings = self.linear_t(template_pair_embeddings)
+        
+        template_embeds["template_pair_embedding"] = template_pair_embeddings
         return template_embeds
