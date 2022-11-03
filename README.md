@@ -26,6 +26,7 @@ FastFold provides a **high-performance implementation of Evoformer** with the fo
 To install FastFold, you will need:
 + Python 3.8 or 3.9.
 + [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) 11.3 or above
++ PyTorch 1.12 or above 
 
 For now, You can install FastFold:
 ### Using Conda (Recommended)
