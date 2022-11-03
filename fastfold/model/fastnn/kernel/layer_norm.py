@@ -36,12 +36,13 @@ class FusedLayerNorm(torch.nn.Module):
     def forward(self, input):
         if len(input.shape) >= 3 and input.shape[-3] > 4000:
             out = torch.empty_like(input)
-            chunk_size = int(4000 * 4000 / input.shape[-3])
+            # set max chunk_size = dim / 2, to max compute efficiency
+            chunk_size = min(4000 * 4000 // input.shape[-3], (input.shape[-3] + 1) // 2)
             if len(input.shape) == 3:
-                for i in range(0, input.shape[-3]):
+                for i in range(input.shape[-3]):
                     out[i:i + chunk_size] = self.kernel_forward(input[i:i + chunk_size])
             elif len(input.shape) == 4:
-                for j in range(0, input.shape[-4]):               
+                for j in range(input.shape[-4]):               
                     for i in range(0, input.shape[-3], chunk_size):
                         out[j, i:i + chunk_size] = self.kernel_forward(input[j, i:i + chunk_size])
             else:
