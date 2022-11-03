@@ -45,8 +45,6 @@ python setup.py install
 
 To leverage the power of FastFold, we recommend you to install [Triton](https://github.com/openai/triton).
 
-**[NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) 11.3 or above is needed.**
-
 ```bash
 pip install triton==2.0.0.dev20221005
 ```
