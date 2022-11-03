@@ -43,7 +43,7 @@ python setup.py install
 
 #### Advanced
 
-To leverage the power of FastFold, we recommend you build [Triton]() from source.
+To leverage the power of FastFold, we recommend you to install [Triton](https://github.com/openai/triton).
 
 **[NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) 11.3 or above is needed.**
 
