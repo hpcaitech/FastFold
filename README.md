@@ -18,15 +18,15 @@ FastFold provides a **high-performance implementation of Evoformer** with the fo
 3. Ease of use
     * Huge performance gains with a few lines changes
     * You don't need to care about how the parallel part is implemented
-4. Faster data processing, about 3x times faster than the original way
+4. Faster data processing, about 3x times faster on monomer, about 3Nx times faster on multimer with N sequence.
+5. Great Reduction on GPU memory, able to inference sequence containing more than **10000** residues.
 
 ## Installation
 
-To install and use FastFold, you will need:
+To install FastFold, you will need:
 + Python 3.8 or 3.9.
-+ [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) 11.1 or above
-+ PyTorch 1.10 or above 
-
++ [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) 11.3 or above
++ PyTorch 1.12 or above 
 
 For now, You can install FastFold:
 ### Using Conda (Recommended)
@@ -42,8 +42,19 @@ conda activate fastfold
 python setup.py install
 ```
 
+#### Advanced
+
+To leverage the power of FastFold, we recommend you to install [Triton](https://github.com/openai/triton).
+
+```bash
+pip install triton==2.0.0.dev20221005
+```
+
+
 ### Using PyPi
 You can download FastFold with pre-built CUDA extensions.
+
+Warning, only stable versions available.
 
 ```shell
 pip install fastfold -f https://release.colossalai.org/fastfold
@@ -147,7 +158,9 @@ python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
 Alphafold's embedding presentations take up a lot of memory as the sequence length increases. To reduce memory usage, 
 you should add parameter `--chunk_size [N]` and `--inplace` to cmdline or shell script `./inference.sh`. 
 The smaller you set N, the less memory will be used, but it will affect the speed. We can inference 
-a sequence of length 7000 in fp32 on a 80G A100.
+a sequence of length 10000 in bf16 with 61GB memory on a Nvidia A100(80GB). For fp32, the max length is 8000.
+> You need to set `PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:15000` to inference such an extreme long sequence.
+
 ```shell
 python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
     --output_dir ./ \
