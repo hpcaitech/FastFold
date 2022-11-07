@@ -1,6 +1,5 @@
 import math
 
-import triton
 import torch
 from einops import rearrange
 
@@ -37,6 +36,8 @@ def test_fused_attention_core():
         test_dtype = [torch.float16, torch.bfloat16]
         test_device = torch.device("cuda")
 
+        tolerance_eps = {torch.float16: 1e-4, torch.bfloat16: 1e-4}
+
         for seq_ in test_seq_:
             for dtype in test_dtype:
                 q = torch.empty((batch_, chunk_, head_, seq_, d_head), dtype=dtype,
@@ -56,7 +57,7 @@ def test_fused_attention_core():
                 ref_out = torch_core_attention(q, k, v, mask, bias)
                 tri_out = fused_attention_core(q, k, v, mask, bias)
                 # compare
-                triton.testing.assert_almost_equal(ref_out, tri_out)
+                torch.allclose(ref_out, tri_out, atol=tolerance_eps[dtype])
 
 
 if __name__ == "__main__":
