@@ -1,9 +1,11 @@
 import math
 
+import pytest
+
 import torch
 from einops import rearrange
 
-TEST_TRITON = True
+TEST_TRITON = False
 try:
     from fastfold.model.fastnn.kernel import fused_attention_core
 except:
@@ -28,7 +30,7 @@ def torch_core_attention(q, k, v, mask, bias):
 
     return weighted_avg
 
-
+@pytest.mark.skipif(TEST_TRITON == False, reason="triton is not available")
 def test_fused_attention_core():
     if TEST_TRITON:
         batch_, chunk_, head_, d_head = 1, 8, 4, 32
