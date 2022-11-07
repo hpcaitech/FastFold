@@ -478,6 +478,157 @@ class OpenFoldDataLoader(torch.utils.data.DataLoader):
         return _batch_prop_gen(it)
 
 
+def SetupTrainDataset(
+    config: mlc.ConfigDict,
+    template_mmcif_dir: str,
+    max_template_date: str,
+    train_data_dir: Optional[str] = None,
+    train_alignment_dir: Optional[str] = None,
+    train_chain_data_cache_path: Optional[str] = None,
+    distillation_data_dir: Optional[str] = None,
+    distillation_alignment_dir: Optional[str] = None,
+    distillation_chain_data_cache_path: Optional[str] = None,
+    val_data_dir: Optional[str] = None,
+    val_alignment_dir: Optional[str] = None,
+    kalign_binary_path: str = '/usr/bin/kalign',
+    train_mapping_path: Optional[str] = None,
+    distillation_mapping_path: Optional[str] = None,
+    obsolete_pdbs_file_path: Optional[str] = None,
+    template_release_dates_cache_path: Optional[str] = None,
+    train_epoch_len: int = 50000, 
+    _alignment_index_path: Optional[str] = None,
+    **kwargs,
+):
+
+    if(train_data_dir is None or train_alignment_dir is None):
+        raise ValueError(
+            'train_data_dir and train_alignment_dir must be specified'
+        )     
+    elif(val_data_dir is not None and val_alignment_dir is None):
+        raise ValueError(
+            'If val_data_dir is specified, val_alignment_dir must '
+            'be specified as well'
+    )
+
+    _alignment_index = None
+    if(_alignment_index_path is not None):
+        with open(_alignment_index_path, "r") as fp:
+            _alignment_index = json.load(fp)
+
+    dataset_gen = partial(OpenFoldSingleDataset,
+            template_mmcif_dir=template_mmcif_dir,
+            max_template_date=max_template_date,
+            config=config,
+            kalign_binary_path=kalign_binary_path,
+            template_release_dates_cache_path=
+                template_release_dates_cache_path,
+            obsolete_pdbs_file_path=
+                obsolete_pdbs_file_path,
+        )
+
+    train_dataset = dataset_gen(
+        data_dir=train_data_dir,
+        alignment_dir=train_alignment_dir,
+        mapping_path=train_mapping_path,
+        max_template_hits=config.train.max_template_hits,
+        shuffle_top_k_prefiltered=
+            config.train.shuffle_top_k_prefiltered,
+        treat_pdb_as_distillation=False,
+        mode="train",
+        _output_raw=True,
+        _alignment_index=_alignment_index,
+    )
+
+    distillation_dataset = None
+    if(distillation_data_dir is not None):
+        distillation_dataset = dataset_gen(
+            data_dir=distillation_data_dir,
+            alignment_dir=distillation_alignment_dir,
+            mapping_path=distillation_mapping_path,
+            max_template_hits=config.train.max_template_hits,
+            treat_pdb_as_distillation=True,
+            mode="train",
+            _output_raw=True,
+        )
+
+        d_prob = config.train.distillation_prob
+    
+    if(distillation_dataset is not None):
+        datasets = [train_dataset, distillation_dataset]
+        d_prob = config.train.distillation_prob
+        probabilities = [1 - d_prob, d_prob]
+        chain_data_cache_paths = [
+            train_chain_data_cache_path,
+            distillation_chain_data_cache_path,
+        ]
+    else:
+        datasets = [train_dataset]
+        probabilities = [1.]   
+        chain_data_cache_paths = [
+            train_chain_data_cache_path,
+        ]
+
+    train_dataset = OpenFoldDataset(
+        datasets=datasets,
+        probabilities=probabilities,
+        epoch_len=train_epoch_len,
+        chain_data_cache_paths=chain_data_cache_paths,
+        _roll_at_init=False,
+    )
+
+    if(val_data_dir is not None):
+        eval_dataset = dataset_gen(
+            data_dir=val_data_dir,
+            alignment_dir=val_alignment_dir,
+            mapping_path=None,
+            max_template_hits=config.eval.max_template_hits,
+            mode="eval",
+            _output_raw=True,
+        )
+    else:
+        eval_dataset = None
+    
+    return train_dataset, eval_dataset
+
+
+def TrainDataLoader(
+    config: mlc.ConfigDict,
+    train_dataset: torch.utils.data.Dataset,
+    test_dataset: Optional[torch.utils.data.Dataset] = None,
+    batch_seed: Optional[int] = None,
+):
+    generator = torch.Generator()
+    if(batch_seed is not None):
+        generator = generator.manual_seed(batch_seed)
+
+    train_batch_collator = OpenFoldBatchCollator(config, "train")
+    train_dataset.reroll()
+    train_dataloader = OpenFoldDataLoader(
+        train_dataset,
+        config=config,
+        stage="train",
+        generator=generator,
+        batch_size=config.data_module.data_loaders.batch_size,
+        num_workers=config.data_module.data_loaders.num_workers,
+        collate_fn=train_batch_collator,
+    )
+
+    test_dataloader = None
+    if test_dataset is not None:
+        test_batch_collator = OpenFoldBatchCollator(config, "test")
+        test_dataloader = OpenFoldDataLoader(
+            train_dataset,
+            config=config,
+            stage="test",
+            generator=generator,
+            batch_size=config.data_module.data_loaders.batch_size,
+            num_workers=config.data_module.data_loaders.num_workers,
+            collate_fn=test_batch_collator,
+        )
+
+    return train_dataloader, test_dataloader
+
+
 class OpenFoldDataModule(pl.LightningDataModule):
     def __init__(self,
         config: mlc.ConfigDict,
