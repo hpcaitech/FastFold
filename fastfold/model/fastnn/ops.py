@@ -91,6 +91,11 @@ class ChunkTransition(nn.Module):
         self.linear2 = Linear(n * d, d, initializer='zeros')
 
     def forward(self, src):
+        if self.training:
+            out = self.norm(src)
+            out = self.linear2(F.relu(self.linear1(out)))
+            return out
+
         para_dim = src.shape[1]
         chunk_size = 48
         if CHUNK_SIZE == None:
@@ -156,6 +161,16 @@ class OutProductMean(nn.Module):
         right_act_all = M_mask * right_act_all
 
         para_dim = left_act.shape[2]
+
+        if self.training:
+            out = torch.einsum('bsid, bsje->bijde', left_act, right_act_all)
+            out = rearrange(out, 'b i j d e -> b i j (d e)')
+            out = self.o_linear(out)
+            Z = out / norm
+
+            return Z + Z_raw
+
+
         chunk_size = CHUNK_SIZE
         if CHUNK_SIZE == None:
             chunk_size = para_dim
@@ -303,6 +318,35 @@ class SelfAttention(nn.Module):
                 # logits += nonbatched_bias.unsqueeze(1)
                 bias = gather_async_opp(*nonbatched_bias, dim=1)
                 bias = rearrange(bias, 'b q k h -> b h q k')
+        
+        if self.training:
+            qkv = self.to_qkv(in_data).chunk(3, dim=-1)
+            q, k, v = map(lambda t: rearrange(t, 'b1 b2 n (h d) -> b1 b2 h n d', h=self.n_head), qkv)
+
+            q = q * self.scaling
+
+            logits = torch.matmul(q, k.transpose(-1, -2))
+
+            if nonbatched_bias is not None:
+                # logits += bias.unsqueeze(1)
+                # logits += (1e9 * (mask_part - 1))[..., :, None, None, :]
+                # weights = torch.nn.functional.softmax(logits, -1)
+                weights = fused_softmax(logits, mask, bias.unsqueeze(1))
+            else:
+                # logits += (1e9 * (mask_part - 1))[..., :, None, None, :]
+                # weights = torch.nn.functional.softmax(logits, -1)
+                weights = fused_softmax(logits, mask)
+
+            weighted_avg = torch.matmul(weights, v)
+            weighted_avg = rearrange(weighted_avg, 'b1 b2 h n d -> b1 b2 n (h d)')
+
+            if self.gating:
+                gate_values = self.gating_linear(in_data)
+                weighted_avg = bias_sigmod_ele(gate_values, self.gating_bias, weighted_avg)
+
+            out = self.o_linear(weighted_avg)
+            
+            return out
 
         output = []
         for ax in range(0, para_dim, chunk_size):
@@ -981,7 +1025,15 @@ class ChunkMSAColumnGlobalAttention(nn.Module):
         )
 
     def forward(self, M_raw, M_mask):
-        
+
+        if self.training:
+            m = self.layernormM(M_raw.transpose(-2, -3))
+            m = self.global_attention(m, M_mask.transpose(-1, -2))
+            m = m.transpose(-2, -3)
+            M_raw = M_raw + m
+            
+            return M_raw
+
         para_dim = M_raw.shape[2]
         if CHUNK_SIZE is None:
             chunk_size = para_dim
@@ -1110,6 +1162,14 @@ class RecyclingEmbedder(nn.Module):
         d = ((d > squared_bins) * (d < upper)).type(x.dtype)
         
         # [*, N, N, C_z]
+
+        if self.training:
+            d = self.linear(d)
+            z = d + self.layer_norm_z(z)
+
+            return m_update, z
+
+        
         para_dim = d.shape[1]
         if CHUNK_SIZE == None:
             chunk_size = para_dim
@@ -1151,6 +1211,31 @@ class GlobalAttention(nn.Module):
         self.o_linear = Linear(n_head * c, out_dim, initializer="zero")
 
     def forward(self, m, mask):
+
+        if self.training:
+            q = torch.sum(m * mask.unsqueeze(-1), dim=-2) / (
+                torch.sum(mask, dim=-1)[..., None] + self.eps
+            )
+            q = q * self.scaling
+            q = self.to_q(q)
+            q = q.view(q.shape[:-1] + (self.n_head, -1))
+
+            k, v = self.to_kv(m).chunk(2, dim=-1)
+
+            logits = torch.matmul(q, k.transpose(-1, -2))
+
+            weights = fused_softmax(logits, mask)
+
+            weighted_avg = torch.matmul(weights, v)
+            weighted_avg = rearrange(weighted_avg, "b1 b2 h d -> b1 b2 (h d)")
+
+            gate_values = self.gating_linear(m)
+            weighted_avg = bias_sigmod_ele(
+                gate_values, self.gating_bias, weighted_avg.unsqueeze(-2)
+            )
+
+            output = self.o_linear(weighted_avg)
+            return output
 
         para_dim = m.shape[1]
         chunk_size = CHUNK_SIZE

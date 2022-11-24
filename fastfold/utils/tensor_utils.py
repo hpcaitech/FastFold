@@ -52,7 +52,7 @@ def dict_multimap(fn, dicts):
         if type(v) is dict:
             new_dict[k] = dict_multimap(fn, all_v)
         else:
-            new_dict[k] = fn(all_v)
+            new_dict[k] = fn(all_v) if len(all_v) > 1 else all_v[0]
 
     return new_dict
 

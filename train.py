@@ -11,7 +11,8 @@ from tqdm import tqdm
 from fastfold.config import model_config
 from fastfold.model.hub import AlphaFold, AlphaFoldLRScheduler
 from fastfold.model.loss import AlphaFoldLoss
-# from fastfold.utils.inject_fastnn import inject_fastnn
+from fastfold.utils.inject_fastnn import inject_fastnn
+from fastfold.distributed.core import init_dap
 from fastfold.data.data_modules import SetupTrainDataset, TrainDataLoader
 from fastfold.utils.tensor_utils import tensor_tree_map
 import logging
@@ -117,22 +118,19 @@ def main():
     )
 
     args = parser.parse_args()
-    disable_existing_loggers()
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
     if args.from_torch:
-        colossalai.launch_from_torch(config=args.config)
-    else:
-        colossalai.launch_from_slurm(config=args.config, host=args.host, port=29500, seed=args.seed)
+        init_dap()
     logger = get_dist_logger()
 
     args.__dict__.pop("config")
     config = model_config(args.config_preset, train=True)
     config.globals.inplace = False
     model = AlphaFold(config)
-    #model = inject_fastnn()
+    model = inject_fastnn(model)
 
     
     train_dataset, test_dataset = SetupTrainDataset(
@@ -150,7 +148,7 @@ def main():
 
     criterion = AlphaFoldLoss(config.loss)
 
-    optimizer = HybridAdam(model.parameters(), lr=gpc.config.lr, eps=gpc.config.eps)
+    optimizer = HybridAdam(model.parameters(), lr=1e-3, eps=1e-8)
 
     lr_scheduler = AlphaFoldLRScheduler(optimizer)
     
@@ -164,7 +162,7 @@ def main():
                                                                 test_dataloader=test_dataloader,
                                                                 )
     
-    for epoch in range(gpc.config.NUM_EPOCHS):
+    for epoch in range(200):
         engine.train()
         if gpc.get_global_rank() == 0:
             train_dataloader = tqdm(train_dataloader)
@@ -176,7 +174,7 @@ def main():
             loss, loss_breakdown = engine.criterion(
                     output, batch, _return_breakdown=True)
             if gpc.get_global_rank() == 0:
-                train_dataloader.set_postfix(loss=loss[0])
+                train_dataloader.set_postfix(loss=float(loss))
             engine.backward(loss)
             engine.step()
         lr_scheduler.step()

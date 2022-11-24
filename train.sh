@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES=3
+export CUDA_VISIBLE_DEVICES=7
 DATA_DIR=/data/scratch/alphafold/alphafold/openfold
 PROJECT_DIR=/home/lclgy/temp_data
 
@@ -27,5 +27,5 @@ torchrun --standalone --nproc_per_node 1 --nnodes 1 train.py \
     --train_chain_data_cache_path=${train_chain_data_cache_path} \
     --template_release_dates_cache_path=${template_release_dates_cache_path} \
     --train_epoch_len=${train_epoch_len} \
-    --config ./train_config.py
+
 

@@ -1,3 +1,4 @@
+# Copyright 2022 HPC-AI Tech Inc.
 # Copyright 2021 AlQuraishi Laboratory
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -217,7 +218,7 @@ class OpenFoldSingleDataset(torch.utils.data.Dataset):
             return data
 
         feats = self.feature_pipeline.process_features(
-            data, self.mode 
+            data, self.mode
         )
 
         return feats
@@ -380,8 +381,10 @@ class OpenFoldBatchCollator:
                 prot, self.stage
             )
             processed_prots.append(features)
-
+        # By this stack, the batch dimension is processed and added.
         stack_fn = partial(torch.stack, dim=0)
+        # I have modified some codes. Now if the bs=1, the shape will be [...] rather than [1, ...]
+        # If bs>1(not allowed), the shape would be still [2, ...]
         return dict_multimap(stack_fn, processed_prots) 
 
 
@@ -465,7 +468,7 @@ class OpenFoldDataLoader(torch.utils.data.DataLoader):
         
         resample_recycling = lambda t: t[..., :no_recycling + 1]
         batch = tensor_tree_map(resample_recycling, batch)
-
+        
         return batch
 
     def __iter__(self):
@@ -597,6 +600,10 @@ def TrainDataLoader(
     test_dataset: Optional[torch.utils.data.Dataset] = None,
     batch_seed: Optional[int] = None,
 ):
+
+    if not config.data_module.data_loaders.batch_size == 1:
+        raise ValueError("Only support batch size equals to 1")
+
     generator = torch.Generator()
     if(batch_seed is not None):
         generator = generator.manual_seed(batch_seed)

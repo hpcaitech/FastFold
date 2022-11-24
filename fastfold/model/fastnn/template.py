@@ -388,8 +388,12 @@ class TemplatePairStack(nn.Module):
             blocks_per_ckpt=self.blocks_per_ckpt if self.training else None,
         )
 
-        for i in range(0, t.shape[0]):
-            t[i] = self.layer_norm(t[i])
+        # tt = torch.empty(t.shape)
+        # for i in range(0, t.shape[0]):
+        #     tt[i] = self.layer_norm(t[i])
+        
+        t = self.layer_norm(t)
+        # print(f'max diff is {torch.abs(torch.max(t - tt.cuda()))}')
         return t
     
     def inplace(
