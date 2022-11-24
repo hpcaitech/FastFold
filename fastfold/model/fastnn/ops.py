@@ -91,26 +91,20 @@ class ChunkTransition(nn.Module):
         self.linear2 = Linear(n * d, d, initializer='zeros')
 
     def forward(self, src):
-        if self.training:
+        if CHUNK_SIZE == None:
             out = self.norm(src)
             out = self.linear2(F.relu(self.linear1(out)))
-            return out
-
-        para_dim = src.shape[1]
-        chunk_size = 48
-        if CHUNK_SIZE == None:
-            chunk_size = para_dim
         else:
             chunk_size = CHUNK_SIZE * 48
-
-        out = torch.empty_like(src)
-        for ax in range(0, para_dim, chunk_size):
-            if DEBUG and ax > 10:
-                break
-            x = self.norm(src[:, ax:ax + chunk_size, :, :])
-            x = self.linear2(F.relu(self.linear1(x)))
-            out[:, ax:ax + chunk_size, :, :] = x
-        out.add_(src)
+            para_dim = src.shape[1]
+            out = torch.empty_like(src)
+            for ax in range(0, para_dim, chunk_size):
+                if DEBUG and ax > 10:
+                    break
+                x = self.norm(src[:, ax:ax + chunk_size, :, :])
+                x = self.linear2(F.relu(self.linear1(x)))
+                out[:, ax:ax + chunk_size, :, :] = x
+            out.add_(src)
         return out
 
     def inplace(self, src):
@@ -160,28 +154,21 @@ class OutProductMean(nn.Module):
         right_act_all = gather_async_opp(right_act_all, work, dim=2)
         right_act_all = M_mask * right_act_all
 
-        para_dim = left_act.shape[2]
-
-        if self.training:
+        if CHUNK_SIZE == None:
             out = torch.einsum('bsid, bsje->bijde', left_act, right_act_all)
             out = rearrange(out, 'b i j d e -> b i j (d e)')
             out = self.o_linear(out)
             Z = out / norm
-
-            return Z + Z_raw
-
-
-        chunk_size = CHUNK_SIZE
-        if CHUNK_SIZE == None:
-            chunk_size = para_dim
-
-        for ax in range(0, para_dim, chunk_size):
-            left_act_part = left_act[:, :, ax:ax + chunk_size, :]
-            O = torch.einsum('bsid,bsje->bijde', left_act_part, right_act_all)
-            O = rearrange(O, 'b i j d e -> b i j (d e)')
-            O = self.o_linear(O)
-            norm0 = norm[:, ax:ax + chunk_size, :, :]
-            Z[:, ax:ax + chunk_size, :, :] = O / norm0
+        else:
+            para_dim = left_act.shape[2]
+            chunk_size = CHUNK_SIZE
+            for ax in range(0, para_dim, chunk_size):
+                left_act_part = left_act[:, :, ax:ax + chunk_size, :]
+                O = torch.einsum('bsid,bsje->bijde', left_act_part, right_act_all)
+                O = rearrange(O, 'b i j d e -> b i j (d e)')
+                O = self.o_linear(O)
+                norm0 = norm[:, ax:ax + chunk_size, :, :]
+                Z[:, ax:ax + chunk_size, :, :] = O / norm0
 
         return Z + Z_raw
 
@@ -306,11 +293,6 @@ class SelfAttention(nn.Module):
         :param nonbatched_bias: None or [batch_size1, n_head, len_q, len_kv]
         """
 
-        para_dim = in_data.shape[1]
-        chunk_size = CHUNK_SIZE
-        if CHUNK_SIZE == None:
-            chunk_size = para_dim
-
         if nonbatched_bias is not None:
             if nonbatched_bias[-1] == -1:
                 bias = nonbatched_bias[0]
@@ -319,7 +301,7 @@ class SelfAttention(nn.Module):
                 bias = gather_async_opp(*nonbatched_bias, dim=1)
                 bias = rearrange(bias, 'b q k h -> b h q k')
         
-        if self.training:
+        if CHUNK_SIZE == None:
             qkv = self.to_qkv(in_data).chunk(3, dim=-1)
             q, k, v = map(lambda t: rearrange(t, 'b1 b2 n (h d) -> b1 b2 h n d', h=self.n_head), qkv)
 
@@ -328,13 +310,8 @@ class SelfAttention(nn.Module):
             logits = torch.matmul(q, k.transpose(-1, -2))
 
             if nonbatched_bias is not None:
-                # logits += bias.unsqueeze(1)
-                # logits += (1e9 * (mask_part - 1))[..., :, None, None, :]
-                # weights = torch.nn.functional.softmax(logits, -1)
                 weights = fused_softmax(logits, mask, bias.unsqueeze(1))
             else:
-                # logits += (1e9 * (mask_part - 1))[..., :, None, None, :]
-                # weights = torch.nn.functional.softmax(logits, -1)
                 weights = fused_softmax(logits, mask)
 
             weighted_avg = torch.matmul(weights, v)
@@ -344,43 +321,44 @@ class SelfAttention(nn.Module):
                 gate_values = self.gating_linear(in_data)
                 weighted_avg = bias_sigmod_ele(gate_values, self.gating_bias, weighted_avg)
 
-            out = self.o_linear(weighted_avg)
+            output = self.o_linear(weighted_avg)
             
-            return out
+        else:
+            para_dim = in_data.shape[1]
+            chunk_size = CHUNK_SIZE
+            output = []
+            for ax in range(0, para_dim, chunk_size):
 
-        output = []
-        for ax in range(0, para_dim, chunk_size):
+                in_data_part = in_data[:, ax:ax + chunk_size, :, :]
+                mask_part = mask[:, ax:ax + chunk_size, :]
 
-            in_data_part = in_data[:, ax:ax + chunk_size, :, :]
-            mask_part = mask[:, ax:ax + chunk_size, :]
+                qkv = self.to_qkv(in_data_part).chunk(3, dim=-1)
+                q, k, v = map(lambda t: rearrange(t, 'b1 b2 n (h d) -> b1 b2 h n d', h=self.n_head), qkv)
 
-            qkv = self.to_qkv(in_data_part).chunk(3, dim=-1)
-            q, k, v = map(lambda t: rearrange(t, 'b1 b2 n (h d) -> b1 b2 h n d', h=self.n_head), qkv)
+                q = q * self.scaling
 
-            q = q * self.scaling
+                logits = torch.matmul(q, k.transpose(-1, -2))
 
-            logits = torch.matmul(q, k.transpose(-1, -2))
+                if nonbatched_bias is not None:
+                    # logits += bias.unsqueeze(1)
+                    # logits += (1e9 * (mask_part - 1))[..., :, None, None, :]
+                    # weights = torch.nn.functional.softmax(logits, -1)
+                    weights = fused_softmax(logits, mask_part, bias.unsqueeze(1))
+                else:
+                    # logits += (1e9 * (mask_part - 1))[..., :, None, None, :]
+                    # weights = torch.nn.functional.softmax(logits, -1)
+                    weights = fused_softmax(logits, mask_part)
 
-            if nonbatched_bias is not None:
-                # logits += bias.unsqueeze(1)
-                # logits += (1e9 * (mask_part - 1))[..., :, None, None, :]
-                # weights = torch.nn.functional.softmax(logits, -1)
-                weights = fused_softmax(logits, mask_part, bias.unsqueeze(1))
-            else:
-                # logits += (1e9 * (mask_part - 1))[..., :, None, None, :]
-                # weights = torch.nn.functional.softmax(logits, -1)
-                weights = fused_softmax(logits, mask_part)
+                weighted_avg = torch.matmul(weights, v)
+                weighted_avg = rearrange(weighted_avg, 'b1 b2 h n d -> b1 b2 n (h d)')
 
-            weighted_avg = torch.matmul(weights, v)
-            weighted_avg = rearrange(weighted_avg, 'b1 b2 h n d -> b1 b2 n (h d)')
+                if self.gating:
+                    gate_values = self.gating_linear(in_data_part)
+                    weighted_avg = bias_sigmod_ele(gate_values, self.gating_bias, weighted_avg)
 
-            if self.gating:
-                gate_values = self.gating_linear(in_data_part)
-                weighted_avg = bias_sigmod_ele(gate_values, self.gating_bias, weighted_avg)
+                output.append(self.o_linear(weighted_avg))
 
-            output.append(self.o_linear(weighted_avg))
-
-        output = torch.cat(output, dim=1)
+            output = torch.cat(output, dim=1)
         
         return output
 
@@ -1025,30 +1003,22 @@ class ChunkMSAColumnGlobalAttention(nn.Module):
         )
 
     def forward(self, M_raw, M_mask):
-
-        if self.training:
+        if CHUNK_SIZE is None:
             m = self.layernormM(M_raw.transpose(-2, -3))
             m = self.global_attention(m, M_mask.transpose(-1, -2))
             m = m.transpose(-2, -3)
             M_raw = M_raw + m
-            
-            return M_raw
 
-        para_dim = M_raw.shape[2]
-        if CHUNK_SIZE is None:
-            chunk_size = para_dim
         else:
             chunk_size = CHUNK_SIZE
-        
-        for i in range(0, para_dim, chunk_size):
-            if DEBUG and i > 10:
-                break
-            m = M_raw[:, :, i:i + chunk_size, :].transpose(-2, -3)
-            m = self.layernormM(m)
-            m_mask = M_mask[:, :, i:i + chunk_size].transpose(-1, -2)
-            m = self.global_attention(m, m_mask)
-            m = m.transpose(-2, -3)
-            M_raw[:, :, i:i + chunk_size, :] += m
+            para_dim = M_raw.shape[2]
+            for i in range(0, para_dim, chunk_size):
+                m = M_raw[:, :, i:i + chunk_size, :].transpose(-2, -3)
+                m = self.layernormM(m)
+                m_mask = M_mask[:, :, i:i + chunk_size].transpose(-1, -2)
+                m = self.global_attention(m, m_mask)
+                m = m.transpose(-2, -3)
+                M_raw[:, :, i:i + chunk_size, :] += m
         
         return M_raw
 
@@ -1161,24 +1131,16 @@ class RecyclingEmbedder(nn.Module):
         # [*, N, N, no_bins]
         d = ((d > squared_bins) * (d < upper)).type(x.dtype)
         
-        # [*, N, N, C_z]
-
-        if self.training:
+        if CHUNK_SIZE == None:
             d = self.linear(d)
             z = d + self.layer_norm_z(z)
-
-            return m_update, z
-
-        
-        para_dim = d.shape[1]
-        if CHUNK_SIZE == None:
-            chunk_size = para_dim
         else:
             chunk_size = CHUNK_SIZE * 48
+            para_dim = d.shape[1]
         
-        for i in range(0, para_dim, chunk_size):
-            di = self.linear(d[i:i + chunk_size, :, :])
-            z[i:i + chunk_size, :, :] = di + self.layer_norm_z(z[i:i + chunk_size, :, :])
+            for i in range(0, para_dim, chunk_size):
+                di = self.linear(d[i:i + chunk_size, :, :])
+                z[i:i + chunk_size, :, :] = di + self.layer_norm_z(z[i:i + chunk_size, :, :])
 
         return m_update, z
 
@@ -1212,7 +1174,7 @@ class GlobalAttention(nn.Module):
 
     def forward(self, m, mask):
 
-        if self.training:
+        if CHUNK_SIZE == None:
             q = torch.sum(m * mask.unsqueeze(-1), dim=-2) / (
                 torch.sum(mask, dim=-1)[..., None] + self.eps
             )
@@ -1234,47 +1196,44 @@ class GlobalAttention(nn.Module):
                 gate_values, self.gating_bias, weighted_avg.unsqueeze(-2)
             )
 
-            output = self.o_linear(weighted_avg)
-            return output
+            m = self.o_linear(weighted_avg)
 
-        para_dim = m.shape[1]
-        chunk_size = CHUNK_SIZE
-        if CHUNK_SIZE == None:
-            chunk_size = para_dim
+        else:
+            para_dim = m.shape[1]
+            chunk_size = CHUNK_SIZE
 
-        output = []
-        for ax in range(0, para_dim, chunk_size):
+            output = []
+            for ax in range(0, para_dim, chunk_size):
 
-            m_part = m[:, ax : ax + chunk_size, :, :]
-            mask_part = mask[:, ax : ax + chunk_size, :]
+                m_part = m[:, ax : ax + chunk_size, :, :]
+                mask_part = mask[:, ax : ax + chunk_size, :]
 
-            q = torch.sum(m_part * mask_part.unsqueeze(-1), dim=-2) / (
-                torch.sum(mask_part, dim=-1)[..., None] + self.eps
-            )
-            q = q * self.scaling
-            q = self.to_q(q)
-            q = q.view(q.shape[:-1] + (self.n_head, -1))
+                q = torch.sum(m_part * mask_part.unsqueeze(-1), dim=-2) / (
+                    torch.sum(mask_part, dim=-1)[..., None] + self.eps
+                )
+                q = q * self.scaling
+                q = self.to_q(q)
+                q = q.view(q.shape[:-1] + (self.n_head, -1))
 
-            k, v = self.to_kv(m_part).chunk(2, dim=-1)
+                k, v = self.to_kv(m_part).chunk(2, dim=-1)
 
-            logits = torch.matmul(q, k.transpose(-1, -2))
+                logits = torch.matmul(q, k.transpose(-1, -2))
 
-            weights = fused_softmax(logits, mask_part)
+                weights = fused_softmax(logits, mask_part)
 
-            weighted_avg = torch.matmul(weights, v)
-            weighted_avg = rearrange(weighted_avg, "b1 b2 h d -> b1 b2 (h d)")
+                weighted_avg = torch.matmul(weights, v)
+                weighted_avg = rearrange(weighted_avg, "b1 b2 h d -> b1 b2 (h d)")
 
-            gate_values = self.gating_linear(m_part)
-            weighted_avg = bias_sigmod_ele(
-                gate_values, self.gating_bias, weighted_avg.unsqueeze(-2)
-            )
+                gate_values = self.gating_linear(m_part)
+                weighted_avg = bias_sigmod_ele(
+                    gate_values, self.gating_bias, weighted_avg.unsqueeze(-2)
+                )
 
-            output.append(self.o_linear(weighted_avg))
+                output.append(self.o_linear(weighted_avg))
 
-        m = torch.cat(output, dim=1)
+            m = torch.cat(output, dim=1)
 
         return m
-
 
 class InputEmbedder(nn.Module):
     """
