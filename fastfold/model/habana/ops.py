@@ -66,11 +66,14 @@ class OutProductMean(nn.Module):
         Z = torch.empty_like(Z_raw)
         M = self.layernormM(M)
         left_act = self.linear_a(M)
-        M_mask = M_mask.unsqueeze(-1)
-        left_act = M_mask * left_act
         right_act = self.linear_b(M)
 
-        norm = torch.einsum('bsid,bsjd->bijd', M_mask, M_mask) + 1e-3
+        M_mask = M_mask.unsqueeze(-1)
+        left_act = M_mask * left_act
+        right_act = M_mask * right_act
+
+        norm = torch.einsum('...ab,...ad->...abd', M_mask.squeeze(-1), M_mask.squeeze(-1))
+        norm = torch.sum(norm, 1).unsqueeze(-1) + 1e-3
 
         O = torch.einsum('bsid,bsje->bijde', left_act, right_act).contiguous()
         O = rearrange(O, 'b i j d e -> b i j (d e)')
