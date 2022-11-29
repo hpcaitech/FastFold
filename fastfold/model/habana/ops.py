@@ -62,16 +62,21 @@ class OutProductMean(nn.Module):
                                initializer='zero',
                                use_bias=True)
 
-    def forward(self, M):
+    def forward(self, M, M_mask, Z_raw):
+        Z = torch.empty_like(Z_raw)
         M = self.layernormM(M)
         left_act = self.linear_a(M)
+        M_mask = M_mask.unsqueeze(-1)
+        left_act = M_mask * left_act
         right_act = self.linear_b(M)
+
+        norm = torch.einsum('bsid,bsjd->bijd', M_mask, M_mask) + 1e-3
 
         O = torch.einsum('bsid,bsje->bijde', left_act, right_act).contiguous()
         O = rearrange(O, 'b i j d e -> b i j (d e)')
-        Z = self.o_linear(O)
+        Z = self.o_linear(O) / norm
 
-        return Z
+        return Z + Z_raw
 
 
 class Linear(nn.Linear):
@@ -134,7 +139,7 @@ class SelfAttention(nn.Module):
                                initializer='zero',
                                use_bias=(not last_bias_fuse))
 
-    def forward(self, in_data, nonbatched_bias=None):
+    def forward(self, in_data, mask, nonbatched_bias=None):
         """
         :param in_data: [batch_size1, batch_size2, len_qkv, qkv_dim]
         :param bias: None or [batch_size1, batch_size2, n_head, len_q, len_kv]
@@ -154,6 +159,8 @@ class SelfAttention(nn.Module):
         q = q * self.scaling
 
         logits = torch.matmul(q, k.transpose(-1, -2))
+
+        logits += (1e9 * (mask - 1))[..., :, None, None, :]
 
         if nonbatched_bias is not None:
             logits += nonbatched_bias.unsqueeze(1)

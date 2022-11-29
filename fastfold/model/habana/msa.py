@@ -36,14 +36,14 @@ class MSARowAttentionWithPairBias(nn.Module):
 
         self.out_bias = nn.parameter.Parameter(data=torch.zeros((d_node,)), requires_grad=True)
 
-    def forward(self, M_raw, Z):
+    def forward(self, M_raw, Z, M_mask):
         ## Input projections
         M = self.layernormM(M_raw)
         Z = self.layernormZ(Z)
         b = F.linear(Z, self.linear_b_weights)
         b = rearrange(b, 'b q k h -> b h q k')
 
-        M = self.attention(M, b)
+        M = self.attention(M, M_mask, b)
         dropout_mask = torch.ones_like(M[:, 0:1, :, :], device=M.device, dtype=M.dtype)
 
         return bias_dropout_add(M, self.out_bias, dropout_mask, M_raw, prob=self.p_drop)
@@ -64,11 +64,12 @@ class MSAColumnAttention(nn.Module):
                                        out_dim=d_node,
                                        gating=True)
 
-    def forward(self, M_raw):
+    def forward(self, M_raw, M_mask):
         M = M_raw.transpose(-2, -3)
         M = self.layernormM(M)
 
-        M = self.attention(M)
+        M_mask = M_mask.transpose(-1, -2)
+        M = self.attention(M, M_mask)
 
         M = M.transpose(-2, -3)
         return M_raw + M
@@ -86,9 +87,9 @@ class MSAStack(nn.Module):
         self.MSAColumnAttention = MSAColumnAttention(d_node=d_node)
         self.MSATransition = Transition(d=d_node)
 
-    def forward(self, node, pair):
-        node = self.MSARowAttentionWithPairBias(node, pair)
-        node = self.MSAColumnAttention(node)
+    def forward(self, node, pair, node_mask):
+        node = self.MSARowAttentionWithPairBias(node, pair, node_mask)
+        node = self.MSAColumnAttention(node, node_mask)
         node = self.MSATransition(node)
 
         return node

@@ -40,14 +40,14 @@ class Evoformer(nn.Module):
         pair_mask = pair_mask.unsqueeze(0)
 
         if not self.is_multimer:
-            m = self.msa(m, z)
-            z = self.communication(m)
-            z = self.pair(z)
+            m = self.msa(m, z, msa_mask)
+            z = self.communication(m, msa_mask, z)
+            z = self.pair(z, pair_mask)
         else:
-            z = self.communication(m)
+            z = self.communication(m, msa_mask, z)
             z_ori = z
-            z = self.pair(z)
-            m = self.msa(m, z_ori)
+            z = self.pair(z, pair_mask)
+            m = self.msa(m, z_ori, msa_mask)
 
         if self.last_block:
             m = m.squeeze(0)

@@ -36,10 +36,12 @@ class TriangleMultiplicationOutgoing(nn.Module):
 
         self.p_drop = p_drop
 
-    def forward(self, Z_raw):
+    def forward(self, Z_raw, Z_mask):
         Z = self.layernorm1(Z_raw)
         left_proj_act = self.left_projection(Z)
         right_proj_act = self.right_projection(Z)
+        left_proj_act = Z_mask.unsqueeze(-1) * left_proj_act
+        right_proj_act = Z_mask.unsqueeze(-1) * right_proj_act
 
         left_proj_act *= torch.sigmoid(self.left_gate(Z))
         right_proj_act *= torch.sigmoid(self.right_gate(Z))
@@ -82,10 +84,12 @@ class TriangleMultiplicationIncoming(nn.Module):
 
         self.p_drop = p_drop
 
-    def forward(self, Z_raw):
+    def forward(self, Z_raw, Z_mask):
         Z = self.layernorm1(Z_raw)
         left_proj_act = self.left_projection(Z)
         right_proj_act = self.right_projection(Z)
+        left_proj_act = Z_mask.unsqueeze(-1) * left_proj_act
+        right_proj_act = Z_mask.unsqueeze(-1) * right_proj_act
 
         left_proj_act *= torch.sigmoid(self.left_gate(Z))
         right_proj_act *= torch.sigmoid(self.right_gate(Z))
@@ -130,12 +134,12 @@ class TriangleAttentionStartingNode(nn.Module):
 
         self.out_bias = nn.parameter.Parameter(data=torch.zeros((d_pair,)), requires_grad=True)
 
-    def forward(self, Z_raw):
+    def forward(self, Z_raw, Z_mask):
         Z = self.layernorm1(Z_raw)
         b = F.linear(Z, self.linear_b_weights)
         b = rearrange(b, 'b q k h -> b h q k')
 
-        Z = self.attention(Z, b)
+        Z = self.attention(Z, Z_mask, b)
 
         dropout_mask = torch.ones_like(Z[:, 0:1, :, :], device=Z.device, dtype=Z.dtype)
         return bias_dropout_add(Z, self.out_bias, dropout_mask, Z_raw, prob=self.p_drop)
@@ -163,13 +167,15 @@ class TriangleAttentionEndingNode(nn.Module):
 
         self.out_bias = nn.parameter.Parameter(data=torch.zeros((d_pair,)), requires_grad=True)
 
-    def forward(self, Z_raw):
+    def forward(self, Z_raw, Z_mask):
         Z = Z_raw.transpose(-2, -3)
+        Z_mask = Z_mask.transpose(-1, -2)
+
         Z = self.layernorm1(Z)
         b = F.linear(Z, self.linear_b_weights)
         b = rearrange(b, 'b q k h -> b h q k')
 
-        Z = self.attention(Z, b)
+        Z = self.attention(Z, Z_mask, b)
 
         Z = Z.transpose(-2, -3)
         dropout_mask = torch.ones_like(Z[:, :, 0:1, :], device=Z.device, dtype=Z.dtype)
@@ -187,10 +193,10 @@ class PairStack(nn.Module):
         self.TriangleAttentionEndingNode = TriangleAttentionEndingNode(d_pair, p_drop=p_drop)
         self.PairTransition = Transition(d=d_pair)
 
-    def forward(self, pair):
-        pair = self.TriangleMultiplicationOutgoing(pair)
-        pair = self.TriangleMultiplicationIncoming(pair)
-        pair = self.TriangleAttentionStartingNode(pair)
-        pair = self.TriangleAttentionEndingNode(pair)
+    def forward(self, pair, pair_mask):
+        pair = self.TriangleMultiplicationOutgoing(pair, pair_mask)
+        pair = self.TriangleMultiplicationIncoming(pair, pair_mask)
+        pair = self.TriangleAttentionStartingNode(pair, pair_mask)
+        pair = self.TriangleAttentionEndingNode(pair, pair_mask)
         pair = self.PairTransition(pair)
         return pair
