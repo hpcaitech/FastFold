@@ -3,15 +3,24 @@ from functools import partial
 
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 from fastfold.utils.checkpointing import checkpoint_blocks
 
 from .msa import MSAStack
 from .ops import OutProductMean, Linear
 from .triangle import PairStack
 
+from fastfold.habana.distributed import gather, scatter, All_to_All
+
+
 class Evoformer(nn.Module):
 
-    def __init__(self, c_m: int, c_z: int, first_block: bool, last_block: bool, is_multimer: bool=False):
+    def __init__(self,
+                 c_m: int,
+                 c_z: int,
+                 first_block: bool,
+                 last_block: bool,
+                 is_multimer: bool = False):
         super(Evoformer, self).__init__()
 
         self.first_block = first_block
@@ -32,20 +41,39 @@ class Evoformer(nn.Module):
         _mask_trans: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
 
+        dap_size = dist.get_world_size()
+
+        seq_length = pair_mask.size(-1)
+        padding_size = (int(seq_length / dap_size) + 1) * dap_size - seq_length
+
         if self.first_block:
             m = m.unsqueeze(0)
             z = z.unsqueeze(0)
 
+            m = torch.nn.functional.pad(m, (0, 0, 0, padding_size))
+            z = torch.nn.functional.pad(z, (0, 0, 0, padding_size, 0, padding_size))
+
+            if self.is_multimer:
+                m = scatter(m, dim=2)
+            else:
+                m = scatter(m, dim=1)
+            z = scatter(z, dim=1)
+
         msa_mask = msa_mask.unsqueeze(0)
         pair_mask = pair_mask.unsqueeze(0)
+
+        msa_mask = torch.nn.functional.pad(msa_mask, (0, padding_size))
+        pair_mask = torch.nn.functional.pad(pair_mask, (0, padding_size, 0, padding_size))
 
         if not self.is_multimer:
             m = self.msa(m, z, msa_mask)
             z = self.communication(m, msa_mask, z)
+            m = All_to_All.apply(m, 1, 2)
             z = self.pair(z, pair_mask)
         else:
             z = self.communication(m, msa_mask, z)
             z_ori = z
+            m = All_to_All.apply(m, 1, 2)
             z = self.pair(z, pair_mask)
             m = self.msa(m, z_ori, msa_mask)
 
@@ -53,8 +81,16 @@ class Evoformer(nn.Module):
             m = m.squeeze(0)
             z = z.squeeze(0)
 
-        return m, z
+            if self.is_multimer:
+                m = gather(m, dim=1)
+            else:
+                m = gather(m, dim=0)
+            z = gather(z, dim=0)
 
+            m = m[:, :-padding_size, :]
+            z = z[:-padding_size, :-padding_size, :]
+
+        return m, z
 
 
 class EvoformerStack(nn.Module):
@@ -70,7 +106,7 @@ class EvoformerStack(nn.Module):
         c_s: int,
         no_blocks: int,
         blocks_per_ckpt: int,
-        clear_cache_between_blocks: bool = False, 
+        clear_cache_between_blocks: bool = False,
         is_multimer: bool = False,
         **kwargs,
     ):
@@ -128,7 +164,8 @@ class EvoformerStack(nn.Module):
 
         self.linear = Linear(c_m, c_s)
 
-    def forward(self,
+    def forward(
+        self,
         m: torch.Tensor,
         z: torch.Tensor,
         msa_mask: torch.Tensor,
@@ -161,8 +198,7 @@ class EvoformerStack(nn.Module):
                 pair_mask=pair_mask,
                 chunk_size=chunk_size,
                 _mask_trans=_mask_trans,
-            )
-            for b in self.blocks
+            ) for b in self.blocks
         ]
 
         m, z = checkpoint_blocks(
@@ -172,5 +208,5 @@ class EvoformerStack(nn.Module):
         )
 
         s = self.linear(m[..., 0, :, :])
-        
+
         return m, z, s

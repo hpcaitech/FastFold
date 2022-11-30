@@ -7,6 +7,8 @@ from torch.nn import LayerNorm
 from .initializer import glorot_uniform_af
 from .kernel import bias_sigmod_ele
 
+from fastfold.habana.distributed import gather, scatter
+
 
 class DropoutRowwise(nn.Module):
 
@@ -68,14 +70,17 @@ class OutProductMean(nn.Module):
         left_act = self.linear_a(M)
         right_act = self.linear_b(M)
 
-        M_mask = M_mask.unsqueeze(-1)
-        left_act = M_mask * left_act
-        right_act = M_mask * right_act
+        right_act_all = gather(right_act, dim=2)
 
-        norm = torch.einsum('...ab,...ad->...abd', M_mask.squeeze(-1), M_mask.squeeze(-1))
+        M_mask = M_mask.unsqueeze(-1)
+        M_mask_col = scatter(M_mask, dim=2)
+        left_act = M_mask_col * left_act
+        right_act_all = M_mask * right_act_all
+
+        norm = torch.einsum('...ab,...ad->...abd', M_mask_col.squeeze(-1), M_mask.squeeze(-1))
         norm = torch.sum(norm, 1).unsqueeze(-1) + 1e-3
 
-        O = torch.einsum('bsid,bsje->bijde', left_act, right_act).contiguous()
+        O = torch.einsum('bsid,bsje->bijde', left_act, right_act_all).contiguous()
         O = rearrange(O, 'b i j d e -> b i j (d e)')
         Z = self.o_linear(O) / norm
 

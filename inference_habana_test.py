@@ -1,14 +1,20 @@
 import pickle
 
 import torch
+import torch.distributed as dist
 import habana_frameworks.torch.core as htcore
 
 from fastfold.config import model_config
 from fastfold.model.hub import AlphaFold
 
-from fastfold.utils.inject_habana import inject_habana
+from fastfold.habana.inject_habana import inject_habana
+
+from fastfold.habana.distributed import init_dap
+
 
 def main():
+    init_dap()
+
     batch = pickle.load(open('./test_batch.pkl', 'rb'))
 
     model_name = "model_1"

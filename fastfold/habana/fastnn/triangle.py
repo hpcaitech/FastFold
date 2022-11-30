@@ -9,6 +9,8 @@ import torch.nn.functional as F
 from .kernel import bias_dropout_add, bias_ele_dropout_residual
 from .ops import Linear, SelfAttention, Transition
 
+from fastfold.habana.distributed import gather, scatter, row_to_col, col_to_row
+
 
 def permute_final_dims(tensor, inds):
     zero_index = -1 * len(inds)
@@ -45,6 +47,8 @@ class TriangleMultiplicationOutgoing(nn.Module):
 
         left_proj_act *= torch.sigmoid(self.left_gate(Z))
         right_proj_act *= torch.sigmoid(self.right_gate(Z))
+
+        right_proj_act = gather(right_proj_act.contiguous(), dim=1)
 
         g = torch.sigmoid(self.output_gate(Z))
         # p = torch.matmul(
@@ -94,6 +98,8 @@ class TriangleMultiplicationIncoming(nn.Module):
         left_proj_act *= torch.sigmoid(self.left_gate(Z))
         right_proj_act *= torch.sigmoid(self.right_gate(Z))
 
+        left_proj_act = gather(left_proj_act.contiguous(), dim=2)
+
         g = torch.sigmoid(self.output_gate(Z))
         # p = torch.matmul(
         #     permute_final_dims(left_proj_act, (2, 1, 0)),
@@ -137,6 +143,7 @@ class TriangleAttentionStartingNode(nn.Module):
     def forward(self, Z_raw, Z_mask):
         Z = self.layernorm1(Z_raw)
         b = F.linear(Z, self.linear_b_weights)
+        b = gather(b, dim=1)
         b = rearrange(b, 'b q k h -> b h q k')
 
         Z = self.attention(Z, Z_mask, b)
@@ -173,6 +180,7 @@ class TriangleAttentionEndingNode(nn.Module):
 
         Z = self.layernorm1(Z)
         b = F.linear(Z, self.linear_b_weights)
+        b = gather(b, dim=1)
         b = rearrange(b, 'b q k h -> b h q k')
 
         Z = self.attention(Z, Z_mask, b)
@@ -194,9 +202,15 @@ class PairStack(nn.Module):
         self.PairTransition = Transition(d=d_pair)
 
     def forward(self, pair, pair_mask):
-        pair = self.TriangleMultiplicationOutgoing(pair, pair_mask)
-        pair = self.TriangleMultiplicationIncoming(pair, pair_mask)
-        pair = self.TriangleAttentionStartingNode(pair, pair_mask)
-        pair = self.TriangleAttentionEndingNode(pair, pair_mask)
+        pair_mask_row = scatter(pair_mask, dim=1)
+        pair_mask_col = scatter(pair_mask, dim=2)
+        pair = self.TriangleMultiplicationOutgoing(pair, pair_mask_row)
+        pair = row_to_col(pair)
+        pair = self.TriangleMultiplicationIncoming(pair, pair_mask_col)
+        pair = col_to_row(pair)
+        pair = self.TriangleAttentionStartingNode(pair, pair_mask_row)
+        pair = row_to_col(pair)
+        pair = self.TriangleAttentionEndingNode(pair, pair_mask_col)
         pair = self.PairTransition(pair)
+        pair = col_to_row(pair)
         return pair

@@ -9,6 +9,8 @@ from torch.nn import LayerNorm
 from .kernel import bias_dropout_add
 from .ops import SelfAttention, Transition
 
+from fastfold.habana.distributed import gather, scatter, row_to_col
+
 
 class MSARowAttentionWithPairBias(nn.Module):
 
@@ -41,6 +43,7 @@ class MSARowAttentionWithPairBias(nn.Module):
         M = self.layernormM(M_raw)
         Z = self.layernormZ(Z)
         b = F.linear(Z, self.linear_b_weights)
+        b = gather(b, dim=1)
         b = rearrange(b, 'b q k h -> b h q k')
 
         M = self.attention(M, M_mask, b)
@@ -88,8 +91,13 @@ class MSAStack(nn.Module):
         self.MSATransition = Transition(d=d_node)
 
     def forward(self, node, pair, node_mask):
-        node = self.MSARowAttentionWithPairBias(node, pair, node_mask)
-        node = self.MSAColumnAttention(node, node_mask)
+        node_mask_row = scatter(node_mask, dim=1)
+        node = self.MSARowAttentionWithPairBias(node, pair, node_mask_row)
+
+        node = row_to_col(node)
+        node_mask_col = scatter(node_mask, dim=2)
+
+        node = self.MSAColumnAttention(node, node_mask_col)
         node = self.MSATransition(node)
 
         return node
