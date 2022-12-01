@@ -221,6 +221,7 @@ def _attention(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor,
     a = softmax(a, -1)
 
     # [*, H, Q, C_hidden]
+    a = a.to(dtype=value.dtype)
     a = torch.matmul(a, value)
 
     # [*, Q, H, C_hidden]
@@ -467,6 +468,7 @@ class GlobalAttention(nn.Module):
         a = softmax(a)
 
         # [*, N_res, H, C_hidden]
+        a = a.to(dtype=v.dtype)
         o = torch.matmul(
             a,
             v,

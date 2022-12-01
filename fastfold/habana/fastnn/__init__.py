@@ -209,4 +209,7 @@ class EvoformerStack(nn.Module):
 
         s = self.linear(m[..., 0, :, :])
 
+        import habana_frameworks.torch.core as htcore
+        htcore.mark_step()
+
         return m, z, s

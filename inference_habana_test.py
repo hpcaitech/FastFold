@@ -1,3 +1,4 @@
+import time
 import pickle
 
 import torch
@@ -27,12 +28,17 @@ def main():
     model = model.eval()
     model = model.to(device=device)
 
+    from habana_frameworks.torch.hpex import hmp
+    hmp.convert(opt_level='O1', bf16_file_path='./habana/ops_bf16.txt', fp32_file_path='./habana/ops_fp32.txt', isVerbose=False)
+
     with torch.no_grad():
         batch = {k: torch.as_tensor(v).to(device=device) for k, v in batch.items()}
-        out = model(batch)
 
-        htcore.mark_step()
-        print(out)
+        for _ in range(5):
+            t = time.perf_counter()
+            out = model(batch)
+            htcore.mark_step()
+            print(f"Inference time: {time.perf_counter() - t}")
 
 
 if __name__ == '__main__':
