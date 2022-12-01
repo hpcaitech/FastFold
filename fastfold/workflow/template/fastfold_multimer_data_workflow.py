@@ -137,7 +137,8 @@ class FastFoldMultimerDataWorkFlow:
 
 
     def run(self, fasta_path: str, alignment_dir: str=None, storage_dir: str=None) -> None:
-        storage_dir = "file:///tmp/ray/" + os.getlogin() + "/workflow_data"
+        timestamp = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime()) 
+        storage_dir = "file:///tmp/ray/" + str(timestamp) + "/workflow_data"
         if storage_dir is not None:
             if not os.path.exists(storage_dir):
                 os.makedirs(storage_dir[7:], exist_ok=True)

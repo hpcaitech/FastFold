@@ -19,5 +19,5 @@ python inference.py target.fasta data/pdb_mmcif/mmcif_files \
     --hhsearch_binary_path `which hhsearch` \
     --kalign_binary_path `which kalign`  \
     --model_preset multimer \
-    --param_path data/params/params_model_1_multimer.npz \
+    --param_path data/params/params_model_1_multimer_v2.npz \
     --model_name model_1_multimer \
