@@ -263,12 +263,7 @@ class EvoformerBlock(nn.Module):
             inf=inf,
             eps=eps,
         )
-        
-        self.outer_product_mean = OuterProductMean(
-            c_m,
-            c_z,
-            c_hidden_opm,
-        )
+ 
         self.is_multimer = is_multimer
 
     def forward(self,
