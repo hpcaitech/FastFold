@@ -387,9 +387,11 @@ class TemplatePairStack(nn.Module):
             args=(t,),
             blocks_per_ckpt=self.blocks_per_ckpt if self.training else None,
         )
-
-        for i in range(0, t.shape[0]):
-            t[i] = self.layer_norm(t[i])
+        if not self.training:
+            for i in range(0, t.shape[0]):
+                t[i] = self.layer_norm(t[i])
+        else:
+            t = self.layer_norm(t[i])
         return t
     
     def inplace(
