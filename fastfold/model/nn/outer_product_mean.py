@@ -13,6 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Copyright 2021 AlQuraishi Laboratory
+# Copyright 2021 DeepMind Technologies Limited
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from functools import partial
 from typing import Optional
 
@@ -20,7 +35,7 @@ import torch
 import torch.nn as nn
 
 from fastfold.model.nn.primitives import Linear
-from fastfold.utils.tensor_utils import chunk_layer
+
 
 
 class OuterProductMean(nn.Module):
@@ -62,35 +77,11 @@ class OuterProductMean(nn.Module):
 
         return outer
 
-    @torch.jit.ignore
-    def _chunk(self, 
-        a: torch.Tensor, 
-        b: torch.Tensor, 
-        chunk_size: int
-    ) -> torch.Tensor:
-        # Since the "batch dim" in this case is not a true batch dimension
-        # (in that the shape of the output depends on it), we need to
-        # iterate over it ourselves
-        a_reshape = a.reshape((-1,) + a.shape[-3:])
-        b_reshape = b.reshape((-1,) + b.shape[-3:])
-        out = []
-        for a_prime, b_prime in zip(a_reshape, b_reshape):
-            outer = chunk_layer(
-                partial(self._opm, b=b_prime),
-                {"a": a_prime},
-                chunk_size=chunk_size,
-                no_batch_dims=1,
-            )
-            out.append(outer)
-        outer = torch.stack(out, dim=0)
-        outer = outer.reshape(a.shape[:-3] + outer.shape[1:])
-
-        return outer
-
-    def forward(self, 
+    def _forward(self, 
         m: torch.Tensor, 
         mask: Optional[torch.Tensor] = None,
-        chunk_size: Optional[int] = None
+        chunk_size: Optional[int] = None,
+        inplace_safe: bool = False,
     ) -> torch.Tensor:
         """
         Args:
@@ -105,12 +96,17 @@ class OuterProductMean(nn.Module):
             mask = m.new_ones(m.shape[:-1])
 
         # [*, N_seq, N_res, C_m]
-        m = self.layer_norm(m)
+        ln = self.layer_norm(m)
 
         # [*, N_seq, N_res, C]
         mask = mask.unsqueeze(-1)
-        a = self.linear_1(m) * mask
-        b = self.linear_2(m) * mask
+        a = self.linear_1(ln) 
+        a = a * mask
+        
+        b = self.linear_2(ln) 
+        b = b * mask
+
+        del ln
 
         a = a.transpose(-2, -3)
         b = b.transpose(-2, -3)
@@ -122,8 +118,21 @@ class OuterProductMean(nn.Module):
 
         # [*, N_res, N_res, 1]
         norm = torch.einsum("...abc,...adc->...bdc", mask, mask)
+        norm = norm + self.eps
 
         # [*, N_res, N_res, C_z]
-        outer = outer / (self.eps + norm)
+        if(inplace_safe):
+            outer /= norm
+        else:
+            outer = outer / norm
 
         return outer
+
+    def forward(self,
+                m: torch.Tensor,
+                mask: Optional[torch.Tensor] = None,
+                chunk_size: Optional[int] = None,
+                inplace_safe: bool = False,
+    ) -> torch.Tensor:
+        return self._forward(m, mask, chunk_size, inplace_safe)
+        

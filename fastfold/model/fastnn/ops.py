@@ -104,7 +104,7 @@ class ChunkTransition(nn.Module):
                 x = self.norm(src[:, ax:ax + chunk_size, :, :])
                 x = self.linear2(F.relu(self.linear1(x)))
                 out[:, ax:ax + chunk_size, :, :] = x
-            out.add_(src)
+        out.add_(src)
         return out
 
     def inplace(self, src):

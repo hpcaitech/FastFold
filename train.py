@@ -12,11 +12,13 @@ from fastfold.config import model_config
 from fastfold.model.hub import AlphaFold, AlphaFoldLRScheduler
 from fastfold.model.loss import AlphaFoldLoss
 from fastfold.utils.inject_fastnn import inject_fastnn
-from fastfold.distributed.core import init_dap
 from fastfold.data.data_modules import SetupTrainDataset, TrainDataLoader
 from fastfold.utils.tensor_utils import tensor_tree_map
+
 import logging
 logging.disable(logging.WARNING)
+import torch.multiprocessing
+torch.multiprocessing.set_sharing_strategy('file_system')
 
 def main():
     parser = colossalai.get_default_parser()
@@ -123,19 +125,35 @@ def main():
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
     if args.from_torch:
-        init_dap()
+        colossalai.launch_from_torch(config=dict(torch_ddp=dict(static_graph=True)))
+    disable_existing_loggers()
     logger = get_dist_logger()
 
-    args.__dict__.pop("config")
     config = model_config(args.config_preset, train=True)
     config.globals.inplace = False
     model = AlphaFold(config)
     model = inject_fastnn(model)
 
-    
+
     train_dataset, test_dataset = SetupTrainDataset(
         config=config.data,
-        **vars(args)
+        template_mmcif_dir=args.template_mmcif_dir,
+        max_template_date=args.max_template_date,
+        train_data_dir=args.train_data_dir,
+        train_alignment_dir=args.train_alignment_dir,
+        train_chain_data_cache_path=args.train_chain_data_cache_path,
+        distillation_data_dir=args.distillation_data_dir,
+        distillation_alignment_dir=args.distillation_alignment_dir,
+        distillation_chain_data_cache_path=args.distillation_chain_data_cache_path,
+        val_data_dir=args.val_data_dir,
+        val_alignment_dir=args.val_alignment_dir,
+        kalign_binary_path=args.kalign_binary_path,
+        train_mapping_path=args.train_mapping_path,
+        distillation_mapping_path=args.distillation_mapping_path,
+        obsolete_pdbs_file_path=args.obsolete_pdbs_file_path,
+        template_release_dates_cache_path=args.template_release_dates_cache_path,
+        train_epoch_len=args.train_epoch_len, 
+        _alignment_index_path=args._alignment_index_path,
     )
 
     train_dataloader, test_dataloader = TrainDataLoader(
@@ -181,6 +199,17 @@ def main():
         
         if test_dataloader is not None:
             engine.eval()
+            if gpc.get_global_rank() == 0:
+                train_dataloader = tqdm(train_dataloader)
+            for batch in test_dataloader:
+                batch = {k: torch.as_tensor(v).cuda() for k, v in batch.items()}
+                with torch.no_grad():
+                    output = engine(batch)
+                    batch = tensor_tree_map(lambda t: t[..., -1], batch)
+                    _, loss_breakdown = engine.criterion(
+                            output, batch, _return_breakdown=True)
+                    if gpc.get_global_rank() == 0:
+                        train_dataloader.set_postfix(loss=float(loss))
         
 
 

@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES=7
+export CUDA_VISIBLE_DEVICES=6,7
 DATA_DIR=/data/scratch/alphafold/alphafold/openfold
 PROJECT_DIR=/home/lclgy/temp_data
 
@@ -18,7 +18,7 @@ train_chain_data_cache_path=${DATA_DIR}/chain_data_cache.json  # a separate chai
 
 train_epoch_len=10000  # virtual length of each training epoch, which affects frequency of validation & checkpointing
 
-torchrun --standalone --nproc_per_node 1 --nnodes 1 train.py \
+torchrun --standalone --nproc_per_node 2 --nnodes 1 train.py \
     --from_torch \
     --template_mmcif_dir=${template_mmcif_dir} \
     --max_template_date=${max_template_date} \
