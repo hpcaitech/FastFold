@@ -391,7 +391,7 @@ class TemplatePairStack(nn.Module):
             for i in range(0, t.shape[0]):
                 t[i] = self.layer_norm(t[i])
         else:
-            t = self.layer_norm(t[i])
+            t = self.layer_norm(t)
         return t
     
     def inplace(

@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 
 from fastfold.model.nn.primitives import Linear, LayerNorm
-from fastfold.model.loss import (
+from fastfold.model.hub.loss import (
     compute_plddt,
     compute_tm,
     compute_predicted_aligned_error,
