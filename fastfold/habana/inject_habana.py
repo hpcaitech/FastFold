@@ -14,7 +14,7 @@
 # limitations under the License.
 import torch
 
-from fastfold.habana.fastnn import EvoformerStack  #, ExtraMSAStack
+from fastfold.habana.fastnn import EvoformerStack, ExtraMSABlock
 #from fastfold.model.fastnn.embedders import TemplateEmbedder
 #from fastfold.model.fastnn.embedders_multimer import TemplateEmbedderMultimer
 #from fastfold.model.fastnn.ops import RecyclingEmbedder, InputEmbedder
@@ -318,19 +318,23 @@ def inject_evoformer(model):
 
 def inject_extramsa(model):
     with torch.no_grad():
-        target_module = model.extra_msa_stack
-        fast_module = ExtraMSAStack(
-            c_m=target_module.blocks[0].msa_att_row.c_in,
-            c_z=target_module.blocks[0].msa_att_row.c_z,
-            no_blocks=len(target_module.blocks),
-            clear_cache_between_blocks=target_module.clear_cache_between_blocks,
-            is_multimer=target_module.blocks[0].is_multimer,
-        )
-        for target_block, fast_block in zip(target_module.blocks, fast_module.blocks):
-            copy_extra_msa_para(fast_block, target_block)
-            if target_block.training == False:
-                fast_block.eval()
-        model.extra_msa_stack = fast_module
+        new_model_blocks = torch.nn.ModuleList()
+        for block_id, ori_block in enumerate(model.extra_msa_stack.blocks):
+            c_m = ori_block.msa_att_row.c_in
+            c_z = ori_block.msa_att_row.c_z
+            new_model_block = ExtraMSABlock(
+                c_m=c_m,
+                c_z=c_z,
+                first_block=(block_id == 0),
+                last_block=(block_id == len(model.extra_msa_stack.blocks) - 1),
+            )
+
+            # copy_extra_msa_para(new_model_block, ori_block)
+            if ori_block.training == False:
+                new_model_block.eval()
+            new_model_blocks.append(new_model_block)
+
+        model.extra_msa_stack.blocks = new_model_blocks
 
 
 def inject_template(model):
@@ -393,7 +397,7 @@ def inject_embedder(model):
 
 def inject_habana(model):
     inject_evoformer(model)
-    #inject_extramsa(model)
+    inject_extramsa(model)
     #inject_template(model)
     #inject_embedder(model)
     return model

@@ -7,9 +7,33 @@ from einops import rearrange
 from torch.nn import LayerNorm
 
 from .kernel import bias_dropout_add
-from .ops import SelfAttention, Transition
+from .ops import SelfAttention, Transition, GlobalAttention
 
 from fastfold.habana.distributed import gather, scatter, row_to_col
+
+
+class MSAColumnGlobalAttention(nn.Module):
+
+    def __init__(self, d_node, c=8, n_head=8):
+        super(MSAColumnGlobalAttention, self).__init__()
+
+        self.d_node = d_node
+        self.c = c
+        self.n_head = n_head
+
+        self.layernormM = LayerNorm(d_node)
+        self.global_attention = GlobalAttention(qkv_dim=d_node, c=c, n_head=n_head, out_dim=d_node)
+
+    def forward(self, M_raw, M_mask):
+        M = M_raw.transpose(-2, -3)
+        M = self.layernormM(M)
+
+        M_mask = M_mask.transpose(-1, -2)
+
+        M = self.global_attention(M, M_mask)
+
+        M = M.transpose(-2, -3)
+        return M_raw + M
 
 
 class MSARowAttentionWithPairBias(nn.Module):
@@ -88,6 +112,32 @@ class MSAStack(nn.Module):
                                                                        p_drop=p_drop)
 
         self.MSAColumnAttention = MSAColumnAttention(d_node=d_node)
+        self.MSATransition = Transition(d=d_node)
+
+    def forward(self, node, pair, node_mask):
+        node_mask_row = scatter(node_mask, dim=1)
+        node = self.MSARowAttentionWithPairBias(node, pair, node_mask_row)
+
+        node = row_to_col(node)
+        node_mask_col = scatter(node_mask, dim=2)
+
+        node = self.MSAColumnAttention(node, node_mask_col)
+        node = self.MSATransition(node)
+
+        return node
+
+
+class ExtraMSAStack(nn.Module):
+
+    def __init__(self, d_node, d_pair, p_drop=0.15):
+        super(ExtraMSAStack, self).__init__()
+
+        self.MSARowAttentionWithPairBias = MSARowAttentionWithPairBias(d_node=d_node,
+                                                                       d_pair=d_pair,
+                                                                       p_drop=p_drop,
+                                                                       c=8)
+
+        self.MSAColumnAttention = MSAColumnGlobalAttention(d_node=d_node, c=8)
         self.MSATransition = Transition(d=d_node)
 
     def forward(self, node, pair, node_mask):

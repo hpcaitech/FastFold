@@ -12,6 +12,8 @@ from fastfold.habana.inject_habana import inject_habana
 
 from fastfold.habana.distributed import init_dap
 
+from fastfold.habana.fastnn.ops import set_chunk_size
+
 
 def main():
     init_dap()
@@ -23,10 +25,13 @@ def main():
 
     config = model_config(model_name)
     config.globals.inplace = False
+    config.globals.chunk_size = 128
     model = AlphaFold(config)
     model = inject_habana(model)
     model = model.eval()
     model = model.to(device=device)
+
+    set_chunk_size(model.globals.chunk_size + 1)
 
     if config.globals.hmp_enable:
         from habana_frameworks.torch.hpex import hmp
