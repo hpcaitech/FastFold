@@ -16,7 +16,7 @@ from fastfold.habana.distributed import init_dap
 def main():
     init_dap()
 
-    batch = pickle.load(open('./test_batch.pkl', 'rb'))
+    batch = pickle.load(open('./test_batch_128.pkl', 'rb'))
 
     model_name = "model_1"
     device = torch.device("hpu")
@@ -28,8 +28,10 @@ def main():
     model = model.eval()
     model = model.to(device=device)
 
-    from habana_frameworks.torch.hpex import hmp
-    hmp.convert(opt_level='O1', bf16_file_path='./habana/ops_bf16.txt', fp32_file_path='./habana/ops_fp32.txt', isVerbose=False)
+    if config.globals.hmp_enable:
+        from habana_frameworks.torch.hpex import hmp
+        hmp.convert(opt_level='O1', bf16_file_path='./habana/ops_bf16.txt', fp32_file_path='./habana/ops_fp32.txt', isVerbose=False)
+        print("========= AMP ENABLED!!")
 
     with torch.no_grad():
         batch = {k: torch.as_tensor(v).to(device=device) for k, v in batch.items()}

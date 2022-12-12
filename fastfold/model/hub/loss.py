@@ -931,16 +931,19 @@ def between_residue_clash_loss(
     )
 
     # Backbone C--N bond between subsequent residues is no clash.
-    c_one_hot = torch.nn.functional.one_hot(
-        residue_index.new_tensor(2), num_classes=14
-    )
+    c_one_hot = torch.tensor([0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], device=residue_index.device)
+    # c_one_hot = torch.nn.functional.one_hot(
+    #     residue_index.new_tensor(2), num_classes=14
+    # )
     c_one_hot = c_one_hot.reshape(
         *((1,) * len(residue_index.shape[:-1])), *c_one_hot.shape
     )
     c_one_hot = c_one_hot.type(fp_type)
-    n_one_hot = torch.nn.functional.one_hot(
-        residue_index.new_tensor(0), num_classes=14
-    )
+
+    n_one_hot = torch.tensor([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], device=residue_index.device)
+    # n_one_hot = torch.nn.functional.one_hot(
+    #     residue_index.new_tensor(0), num_classes=14
+    # )
     n_one_hot = n_one_hot.reshape(
         *((1,) * len(residue_index.shape[:-1])), *n_one_hot.shape
     )
@@ -963,7 +966,9 @@ def between_residue_clash_loss(
     cys_sg_idx = cys_sg_idx.reshape(
         *((1,) * len(residue_index.shape[:-1])), 1
     ).squeeze(-1)
-    cys_sg_one_hot = torch.nn.functional.one_hot(cys_sg_idx, num_classes=14)
+    
+    cys_sg_one_hot = torch.tensor([0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0], device=n_one_hot.device)
+    # cys_sg_one_hot = torch.nn.functional.one_hot(cys_sg_idx, num_classes=14)
     disulfide_bonds = (
         cys_sg_one_hot[..., None, None, :, None]
         * cys_sg_one_hot[..., None, None, None, :]
