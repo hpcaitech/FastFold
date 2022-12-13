@@ -23,7 +23,7 @@ from fastfold.common import (
     protein,
     residue_constants,
 )
-import fastfold.model.loss as loss
+import fastfold.model.hub.loss as loss
 from fastfold.relax import cleanup, utils
 import ml_collections
 import numpy as np
