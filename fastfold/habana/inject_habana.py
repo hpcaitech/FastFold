@@ -14,7 +14,7 @@
 # limitations under the License.
 import torch
 
-from fastfold.habana.fastnn import EvoformerStack, ExtraMSABlock
+from fastfold.habana.fastnn import EvoformerStack, ExtraMSAStack
 #from fastfold.model.fastnn.embedders import TemplateEmbedder
 #from fastfold.model.fastnn.embedders_multimer import TemplateEmbedderMultimer
 #from fastfold.model.fastnn.ops import RecyclingEmbedder, InputEmbedder
@@ -48,7 +48,9 @@ def copy_qkv_linear(model_fast, ori_q, ori_k, ori_v):
 
 
 def copy_attention(model_fast, model_ori):
-    copy_qkv_linear(model_fast.to_qkv, model_ori.linear_q, model_ori.linear_k, model_ori.linear_v)
+    copy_linear(model_fast.to_q, model_ori.linear_q)
+    copy_linear(model_fast.to_k, model_ori.linear_k)
+    copy_linear(model_fast.to_v, model_ori.linear_v)
     copy_linear(model_fast.gating_linear, model_ori.linear_g)
     copy_linear(model_fast.o_linear, model_ori.linear_o)
 
@@ -75,15 +77,17 @@ def copy_triangle(model_fast, model_ori):
     copy_linear(model_fast.output_gate, model_ori.linear_g)
     copy_linear(model_fast.output_projection, model_ori.linear_z)
     model_fast.output_bias.copy_(model_ori.linear_z.bias)
+    
+    copy_linear(model_fast.left_projection, model_ori.linear_a_p)
+    copy_linear(model_fast.right_projection, model_ori.linear_b_p)
 
-    copy_left_right(model_fast.left_right_projection, model_ori.linear_a_p, model_ori.linear_b_p)
-
-    copy_left_right(model_fast.left_right_gate, model_ori.linear_a_g, model_ori.linear_b_g)
+    copy_linear(model_fast.left_gate, model_ori.linear_a_g)
+    copy_linear(model_fast.right_gate, model_ori.linear_b_g)
 
 
 def copy_triangle_att(model_fast, model_ori):
     copy_layernorm(model_fast.layernorm1, model_ori.layer_norm)
-    copy_linear(model_fast.linear_b, model_ori.linear)
+    model_fast.linear_b_weights = model_ori.linear.weight
     copy_attention(model_fast.attention, model_ori.mha)
 
     model_fast.out_bias.copy_(model_ori.mha.linear_o.bias)
@@ -309,32 +313,29 @@ def inject_evoformer(model):
             is_multimer=target_module.blocks[0].is_multimer,
         )
         for target_block, fast_block in zip(target_module.blocks, fast_module.blocks):
-            # copy_evoformer_para(fast_block, target_block)
-            if target_block.training == False:
-                fast_block.eval()
-        # copy_linear(fast_module.linear, target_module.linear)
+            copy_evoformer_para(fast_block, target_block)
+        if target_module.training == False:
+            fast_module.eval()
+        copy_linear(fast_module.linear, target_module.linear)
         model.evoformer = fast_module
 
 
 def inject_extramsa(model):
     with torch.no_grad():
-        new_model_blocks = torch.nn.ModuleList()
-        for block_id, ori_block in enumerate(model.extra_msa_stack.blocks):
-            c_m = ori_block.msa_att_row.c_in
-            c_z = ori_block.msa_att_row.c_z
-            new_model_block = ExtraMSABlock(
-                c_m=c_m,
-                c_z=c_z,
-                first_block=(block_id == 0),
-                last_block=(block_id == len(model.extra_msa_stack.blocks) - 1),
-            )
-
-            # copy_extra_msa_para(new_model_block, ori_block)
-            if ori_block.training == False:
-                new_model_block.eval()
-            new_model_blocks.append(new_model_block)
-
-        model.extra_msa_stack.blocks = new_model_blocks
+        target_module = model.extra_msa_stack
+        fast_module = ExtraMSAStack(
+            c_m=target_module.blocks[0].msa_att_row.c_in,
+            c_z=target_module.blocks[0].msa_att_row.c_z,
+            no_blocks=len(target_module.blocks),
+            blocks_per_ckpt=1,
+            clear_cache_between_blocks=target_module.clear_cache_between_blocks,
+            is_multimer=target_module.blocks[0].is_multimer,
+        )
+        for target_block, fast_block in zip(target_module.blocks, fast_module.blocks):
+            copy_extra_msa_para(fast_block, target_block)
+        if target_module.training == False:
+            fast_module.eval()
+        model.extra_msa_stack = fast_module
 
 
 def inject_template(model):

@@ -18,14 +18,14 @@ from fastfold.habana.fastnn.ops import set_chunk_size
 def main():
     init_dap()
 
-    batch = pickle.load(open('./test_batch_128.pkl', 'rb'))
+    batch = pickle.load(open('./test_batch_1024.pkl', 'rb'))
 
     model_name = "model_1"
     device = torch.device("hpu")
 
     config = model_config(model_name)
     config.globals.inplace = False
-    config.globals.chunk_size = 128
+    config.globals.chunk_size = 32
     model = AlphaFold(config)
     model = inject_habana(model)
     model = model.eval()

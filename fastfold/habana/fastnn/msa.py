@@ -127,10 +127,10 @@ class MSAStack(nn.Module):
         return node
 
 
-class ExtraMSAStack(nn.Module):
+class ExtraMSACore(nn.Module):
 
     def __init__(self, d_node, d_pair, p_drop=0.15):
-        super(ExtraMSAStack, self).__init__()
+        super(ExtraMSACore, self).__init__()
 
         self.MSARowAttentionWithPairBias = MSARowAttentionWithPairBias(d_node=d_node,
                                                                        d_pair=d_pair,

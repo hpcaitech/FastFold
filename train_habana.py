@@ -131,7 +131,7 @@ def main():
     config = model_config(args.config_preset, train=True)
     config.globals.inplace = False
     model = AlphaFold(config)
-    # model = inject_habana(model)
+    model = inject_habana(model)
 
     model = model.to(device="hpu")
 

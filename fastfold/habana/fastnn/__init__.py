@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.distributed as dist
 from fastfold.utils.checkpointing import checkpoint_blocks
 
-from .msa import MSAStack, ExtraMSAStack
+from .msa import MSAStack, ExtraMSACore
 from .ops import OutProductMean, Linear
 from .triangle import PairStack
 
@@ -204,11 +204,15 @@ class EvoformerStack(nn.Module):
             ) for b in self.blocks
         ]
 
-        m, z = checkpoint_blocks(
-            blocks,
-            args=(m, z),
-            blocks_per_ckpt=self.blocks_per_ckpt if self.training else None,
-        )
+        if torch.is_grad_enabled():
+            m, z = checkpoint_blocks(
+                blocks,
+                args=(m, z),
+                blocks_per_ckpt=self.blocks_per_ckpt if self.training else None,
+            )
+        else:
+            for b in blocks:
+                m, z = b(m, z)
 
         s = self.linear(m[..., 0, :, :])
 
@@ -231,9 +235,9 @@ class ExtraMSABlock(nn.Module):
         self.first_block = first_block
         self.last_block = last_block
 
-        self.msa = ExtraMSAStack(c_m, c_z, p_drop=0.15)
+        self.msa_stack = ExtraMSACore(c_m, c_z, p_drop=0.15)
         self.communication = OutProductMean(n_feat=c_m, n_feat_out=c_z, n_feat_proj=32)
-        self.pair = PairStack(d_pair=c_z)
+        self.pair_stack = PairStack(d_pair=c_z)
         self.is_multimer = is_multimer
 
     def forward(
@@ -271,16 +275,16 @@ class ExtraMSABlock(nn.Module):
         pair_mask = torch.nn.functional.pad(pair_mask, (0, padding_size, 0, padding_size))
 
         if not self.is_multimer:
-            m = self.msa(m, z, msa_mask)
+            m = self.msa_stack(m, z, msa_mask)
             z = self.communication(m, msa_mask, z)
             m = All_to_All.apply(m, 1, 2)
-            z = self.pair(z, pair_mask)
+            z = self.pair_stack(z, pair_mask)
         else:
             z = self.communication(m, msa_mask, z)
             z_ori = z
             m = All_to_All.apply(m, 1, 2)
-            z = self.pair(z, pair_mask)
-            m = self.msa(m, z_ori, msa_mask)
+            z = self.pair_stack(z, pair_mask)
+            m = self.msa_stack(m, z_ori, msa_mask)
 
         if self.last_block:
             m = m.squeeze(0)
@@ -299,3 +303,64 @@ class ExtraMSABlock(nn.Module):
         htcore.mark_step()
 
         return m, z
+
+
+class ExtraMSAStack(nn.Module):
+    """
+    Implements Algorithm 18.
+    """
+
+    def __init__(self,
+        c_m: int,
+        c_z: int,
+        no_blocks: int,
+        blocks_per_ckpt: int,
+        clear_cache_between_blocks: bool = False,
+        is_multimer: bool = False,
+        **kwargs,
+    ):
+        super(ExtraMSAStack, self).__init__()
+
+        self.blocks_per_ckpt = blocks_per_ckpt
+
+        self.blocks = nn.ModuleList()
+        for block_id in range(no_blocks):
+            block = ExtraMSABlock(
+                c_m=c_m,
+                c_z=c_z,
+                first_block=(block_id == 0),
+                last_block=(block_id == no_blocks - 1),
+                is_multimer=is_multimer,
+            )
+            self.blocks.append(block)
+
+    def forward(self,
+        m: torch.Tensor,
+        z: torch.Tensor,
+        chunk_size: int,
+        msa_mask: Optional[torch.Tensor] = None,
+        pair_mask: Optional[torch.Tensor] = None,
+        _mask_trans: bool = True,
+    ) -> torch.Tensor:
+        blocks = [
+            partial(
+                b,
+                msa_mask=msa_mask,
+                pair_mask=pair_mask,
+                chunk_size=chunk_size,
+                _mask_trans=_mask_trans,
+            )
+            for b in self.blocks
+        ]
+
+        if torch.is_grad_enabled():
+            m, z = checkpoint_blocks(
+                blocks,
+                args=(m, z),
+                blocks_per_ckpt=self.blocks_per_ckpt if self.training else None,
+            )
+        else:
+            for b in blocks:
+                m, z = b(m, z)
+
+        return z

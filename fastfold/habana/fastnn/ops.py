@@ -90,8 +90,7 @@ class OutProductMean(nn.Module):
         left_act = M_mask_col * left_act
         right_act_all = M_mask * right_act_all
 
-        norm = torch.einsum('...ab,...ad->...abd', M_mask_col.squeeze(-1), M_mask.squeeze(-1))
-        norm = torch.sum(norm, 1).unsqueeze(-1) + 1e-3
+        norm = torch.einsum('...ab,...ad->...bd', M_mask_col.squeeze(-1).squeeze(0), M_mask.squeeze(-1).squeeze(0)).unsqueeze(-1).unsqueeze(0) + 1e-3
 
         para_dim = left_act.shape[2]
         chunk_size = CHUNK_SIZE
