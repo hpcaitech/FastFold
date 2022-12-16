@@ -250,6 +250,9 @@ class ExtraMSABlock(nn.Module):
         _mask_trans: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
 
+        import habana_frameworks.torch.core as htcore
+        htcore.mark_step()
+
         dap_size = dist.get_world_size()
 
         seq_length = pair_mask.size(-1)
@@ -299,7 +302,6 @@ class ExtraMSABlock(nn.Module):
             m = m[:, :-padding_size, :]
             z = z[:-padding_size, :-padding_size, :]
 
-        import habana_frameworks.torch.core as htcore
         htcore.mark_step()
 
         return m, z

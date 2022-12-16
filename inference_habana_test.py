@@ -9,23 +9,22 @@ from fastfold.config import model_config
 from fastfold.model.hub import AlphaFold
 
 from fastfold.habana.inject_habana import inject_habana
-
-from fastfold.habana.distributed import init_dap
-
+from fastfold.habana.distributed import init_dist
 from fastfold.habana.fastnn.ops import set_chunk_size
 
 
 def main():
-    init_dap()
+    init_dist()
 
-    batch = pickle.load(open('./test_batch_1024.pkl', 'rb'))
+    batch = pickle.load(open('./test_batch_512.pkl', 'rb'))
 
     model_name = "model_1"
     device = torch.device("hpu")
 
     config = model_config(model_name)
     config.globals.inplace = False
-    config.globals.chunk_size = 32
+    config.globals.chunk_size = 512
+    config.globals.hmp_enable = True
     model = AlphaFold(config)
     model = inject_habana(model)
     model = model.eval()

@@ -407,4 +407,7 @@ def chunk_layer(
     reshape = lambda t: t.view(orig_batch_dims + t.shape[1:])
     out = tensor_tree_map(reshape, out)
 
+    import habana_frameworks.torch.core as htcore
+    htcore.mark_step()
+
     return out

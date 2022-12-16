@@ -5,11 +5,13 @@ import numpy as np
 
 from tqdm import tqdm
 
+from torch.nn.parallel import DistributedDataParallel as DDP
+
 import fastfold
 from fastfold.config import model_config
 from fastfold.model.hub import AlphaFold, AlphaFoldLRScheduler, AlphaFoldLoss
 from fastfold.habana.inject_habana import inject_habana
-from fastfold.habana.distributed import init_dap
+from fastfold.habana.distributed import init_dist
 from fastfold.data.data_modules import SetupTrainDataset, TrainDataLoader
 from fastfold.utils.tensor_utils import tensor_tree_map
 
@@ -122,7 +124,7 @@ def main():
 
     args = parser.parse_args()
 
-    init_dap()
+    init_dist()
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -134,6 +136,7 @@ def main():
     model = inject_habana(model)
 
     model = model.to(device="hpu")
+    model = DDP(model)
 
     train_dataset, test_dataset = SetupTrainDataset(
         config=config.data,

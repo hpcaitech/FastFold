@@ -4,6 +4,8 @@ import torch
 import torch.distributed as dist
 from torch import Tensor
 
+from .core import (get_tensor_model_parallel_group, get_tensor_model_parallel_rank,
+                   get_tensor_model_parallel_world_size)
 from .core import ensure_divisibility
 
 
@@ -16,36 +18,39 @@ def _reduce(tensor: Tensor) -> Tensor:
     if dist.get_world_size() == 1:
         return tensor
 
-    dist.all_reduce(tensor, op=dist.ReduceOp.SUM, async_op=False)
+    dist.all_reduce(tensor,
+                    op=dist.ReduceOp.SUM,
+                    group=get_tensor_model_parallel_group(),
+                    async_op=False)
 
     return tensor
 
 
 def _split(tensor: Tensor, dim: int = -1) -> Tensor:
-    if dist.get_world_size() == 1:
+    if get_tensor_model_parallel_world_size() == 1:
         return tensor
 
-    split_size = divide(tensor.shape[dim], dist.get_world_size())
+    split_size = divide(tensor.shape[dim], get_tensor_model_parallel_world_size())
     tensor_list = torch.split(tensor, split_size, dim=dim)
 
-    output = tensor_list[dist.get_rank()].contiguous()
+    output = tensor_list[get_tensor_model_parallel_rank()].contiguous()
 
     return output
 
 
 def _gather(tensor: Tensor, dim: int = -1) -> Tensor:
-    if dist.get_world_size() == 1:
+    if get_tensor_model_parallel_world_size() == 1:
         return tensor
 
     if dim == 1 and list(tensor.shape)[0] == 1:
         output_shape = list(tensor.shape)
-        output_shape[1] *= dist.get_world_size()
+        output_shape[1] *= get_tensor_model_parallel_world_size()
         output = torch.empty(output_shape, dtype=tensor.dtype, device=tensor.device)
-        tensor_list = output.chunk(dist.get_world_size(), dim=1)
-        dist.all_gather(list(tensor_list), tensor, async_op=False)
+        tensor_list = output.chunk(get_tensor_model_parallel_world_size(), dim=1)
+        dist.all_gather(list(tensor_list), tensor, group=get_tensor_model_parallel_group(), async_op=False)
     else:
-        tensor_list = [torch.empty_like(tensor) for _ in range(dist.get_world_size())]
-        dist.all_gather(tensor_list, tensor, async_op=False)
+        tensor_list = [torch.empty_like(tensor) for _ in range(get_tensor_model_parallel_world_size())]
+        dist.all_gather(tensor_list, tensor, group=get_tensor_model_parallel_group(), async_op=False)
         output = torch.cat(tensor_list, dim=dim)
 
     return output
@@ -136,11 +141,11 @@ def _all_to_all(tensor: Tensor, in_dim: int = -1, out_dim: int = -1) -> Tensor:
     tensor = tensor.transpose(in_dim, 0).contiguous()
 
     output = torch.empty_like(tensor)
-    dist.all_to_all_single(output, tensor)
+    dist.all_to_all_single(output, tensor, group=get_tensor_model_parallel_group())
 
     output = output.transpose(in_dim, 0).contiguous()
 
-    tensor_list = output.chunk(dist.get_world_size(), dim=in_dim)
+    tensor_list = output.chunk(get_tensor_model_parallel_world_size(), dim=in_dim)
 
     return torch.cat(tensor_list, dim=out_dim)
 
