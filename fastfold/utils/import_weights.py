@@ -127,7 +127,8 @@ def assign(translation_dict, orig_weights):
                 print(weights[0].shape)
                 raise
 
-def get_translation_dict(model, is_multimer: bool = False):
+def get_translation_dict(model, version):
+    is_multimer = "multimer" in version
     #######################
     # Some templates
     #######################
@@ -537,15 +538,6 @@ def get_translation_dict(model, is_multimer: bool = False):
             },
         }
 
-    return translations
-
-
-
-def import_jax_weights_(model, npz_path, version="model_1"):
-    data = np.load(npz_path)
-
-    translations = get_translation_dict(model, is_multimer=("multimer" in version))
-
     no_templ = [
         "model_3",
         "model_4",
@@ -565,6 +557,14 @@ def import_jax_weights_(model, npz_path, version="model_1"):
         translations["predicted_aligned_error_head"] = {
             "logits": LinearParams(model.aux_heads.tm.linear)
         }
+
+    return translations
+
+
+def import_jax_weights_(model, npz_path, version="model_1"):
+    data = np.load(npz_path)
+
+    translations = get_translation_dict(model, version)
 
     # Flatten keys and insert missing key prefixes
     flat = _process_translations_dict(translations)
