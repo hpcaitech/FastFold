@@ -318,7 +318,7 @@ class AlphaFold(nn.Module):
                         [feats["msa_mask"], template_embeds["template_mask"]],
                         dim=-2,
                     )
-        del template_feats, template_embeds
+            del template_feats, template_embeds
 
         # Embed extra MSA features + merge with pairwise embeddings
         if self.config.extra_msa.enabled:
@@ -352,7 +352,7 @@ class AlphaFold(nn.Module):
                     pair_mask=pair_mask.to(dtype=z[0].dtype),
                     _mask_trans=self.config._mask_trans,
                 )[0]
-        del extra_msa_feat, extra_msa_fn
+            del extra_msa_feat, extra_msa_fn
 
         # Run MSA + pair embeddings through the trunk of the network
         # m: [*, S, N, C_m]
