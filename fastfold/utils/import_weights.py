@@ -20,6 +20,7 @@ import numpy as np
 import torch
 from typing import Union, List
 
+from fastfold.model.nn.triangular_multiplicative_update import is_fused_triangle_multiplication
 
 _NPZ_KEY_PREFIX = "alphafold/alphafold_iteration/"
 
@@ -187,32 +188,55 @@ def get_translation_dict(model, version):
         "feat_2d_weights": LinearWeight(tri_att.linear.weight),
         "attention": AttentionGatedParams(tri_att.mha),
     }
+    
+    if is_fused_triangle_multiplication():
+        TriMulOutParams = lambda tri_mul: {
+            "left_norm_input": LayerNormParams(tri_mul.layer_norm_in),
+            "projection": LinearParams(tri_mul.linear_p),
+            "gate": LinearParams(tri_mul.linear_g),
+            "center_norm": LayerNormParams(tri_mul.layer_norm_out),
+            "output_projection": LinearParams(tri_mul.linear_z),
+            "gating_linear": LinearParams(tri_mul.linear_gate),
+        }
 
-    TriMulOutParams = lambda tri_mul: {
-        "layer_norm_input": LayerNormParams(tri_mul.layer_norm_in),
-        "left_projection": LinearParams(tri_mul.linear_a_p),
-        "right_projection": LinearParams(tri_mul.linear_b_p),
-        "left_gate": LinearParams(tri_mul.linear_a_g),
-        "right_gate": LinearParams(tri_mul.linear_b_g),
-        "center_layer_norm": LayerNormParams(tri_mul.layer_norm_out),
-        "output_projection": LinearParams(tri_mul.linear_z),
-        "gating_linear": LinearParams(tri_mul.linear_g),
-    }
+        # see commit b88f8da on the Alphafold repo
+        # Alphafold swaps the pseudocode's a and b between the incoming/outcoming
+        # iterations of triangle multiplication, which is confusing and not
+        # reproduced in our implementation.
+        TriMulInParams = lambda tri_mul: {
+            "left_norm_input": LayerNormParams(tri_mul.layer_norm_in),
+            "projection": LinearParams(tri_mul.linear_p),
+            "gate": LinearParams(tri_mul.linear_g),
+            "center_norm": LayerNormParams(tri_mul.layer_norm_out),
+            "output_projection": LinearParams(tri_mul.linear_z),
+            "gating_linear": LinearParams(tri_mul.linear_gate),
+        }
+    else:
+        TriMulOutParams = lambda tri_mul: {
+            "layer_norm_input": LayerNormParams(tri_mul.layer_norm_in),
+            "left_projection": LinearParams(tri_mul.linear_a_p),
+            "right_projection": LinearParams(tri_mul.linear_b_p),
+            "left_gate": LinearParams(tri_mul.linear_a_g),
+            "right_gate": LinearParams(tri_mul.linear_b_g),
+            "center_layer_norm": LayerNormParams(tri_mul.layer_norm_out),
+            "output_projection": LinearParams(tri_mul.linear_z),
+            "gating_linear": LinearParams(tri_mul.linear_g),
+        }
 
-    # see commit b88f8da on the Alphafold repo
-    # Alphafold swaps the pseudocode's a and b between the incoming/outcoming
-    # iterations of triangle multiplication, which is confusing and not
-    # reproduced in our implementation.
-    TriMulInParams = lambda tri_mul: {
-        "layer_norm_input": LayerNormParams(tri_mul.layer_norm_in),
-        "left_projection": LinearParams(tri_mul.linear_b_p),
-        "right_projection": LinearParams(tri_mul.linear_a_p),
-        "left_gate": LinearParams(tri_mul.linear_b_g),
-        "right_gate": LinearParams(tri_mul.linear_a_g),
-        "center_layer_norm": LayerNormParams(tri_mul.layer_norm_out),
-        "output_projection": LinearParams(tri_mul.linear_z),
-        "gating_linear": LinearParams(tri_mul.linear_g),
-    }
+        # see commit b88f8da on the Alphafold repo
+        # Alphafold swaps the pseudocode's a and b between the incoming/outcoming
+        # iterations of triangle multiplication, which is confusing and not
+        # reproduced in our implementation.
+        TriMulInParams = lambda tri_mul: {
+            "layer_norm_input": LayerNormParams(tri_mul.layer_norm_in),
+            "left_projection": LinearParams(tri_mul.linear_b_p),
+            "right_projection": LinearParams(tri_mul.linear_a_p),
+            "left_gate": LinearParams(tri_mul.linear_b_g),
+            "right_gate": LinearParams(tri_mul.linear_a_g),
+            "center_layer_norm": LayerNormParams(tri_mul.layer_norm_out),
+            "output_projection": LinearParams(tri_mul.linear_z),
+            "gating_linear": LinearParams(tri_mul.linear_g),
+        }
 
     PairTransitionParams = lambda pt: {
         "input_layer_norm": LayerNormParams(pt.layer_norm),
@@ -553,7 +577,7 @@ def get_translation_dict(model, version):
             if "template_" in k:
                 evo_dict.pop(k)
 
-    if "_ptm" in version:
+    if "_ptm" in version or is_multimer:
         translations["predicted_aligned_error_head"] = {
             "logits": LinearParams(model.aux_heads.tm.linear)
         }

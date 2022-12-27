@@ -34,6 +34,7 @@ import fastfold.relax.relax as relax
 from fastfold.common import protein, residue_constants
 from fastfold.config import model_config
 from fastfold.model.fastnn import set_chunk_size
+from fastfold.model.nn.triangular_multiplicative_update import set_fused_triangle_multiplication
 from fastfold.data import data_pipeline, feature_pipeline, templates
 from fastfold.data.tools import hhsearch, hmmsearch
 from fastfold.workflow.template import FastFoldDataWorkFlow, FastFoldMultimerDataWorkFlow
@@ -117,6 +118,10 @@ def inference_model(rank, world_size, result_q, batch, args):
     config = model_config(args.model_name)
     if args.chunk_size:
         config.globals.chunk_size = args.chunk_size
+
+    if "v3" in args.param_path:
+        set_fused_triangle_multiplication()
+
     config.globals.inplace = args.inplace
     config.globals.is_multimer = args.model_preset == 'multimer'
     model = AlphaFold(config)
