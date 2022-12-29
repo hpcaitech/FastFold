@@ -575,7 +575,7 @@ multimer_model_config_update = {
         "tm": {
             "c_z": c_z,
             "no_bins": aux_distogram_bins,
-            "enabled": tm_enabled,
+            "enabled": True,
         },
         "masked_msa": {
             "c_m": c_m,

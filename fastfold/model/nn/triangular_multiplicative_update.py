@@ -22,6 +22,16 @@ import torch.nn as nn
 from fastfold.model.nn.primitives import Linear, LayerNorm
 from fastfold.utils.tensor_utils import permute_final_dims
 
+_FUSED_TRIANGLE_MULTIPLICATION = False
+
+
+def set_fused_triangle_multiplication():
+    global _FUSED_TRIANGLE_MULTIPLICATION
+    _FUSED_TRIANGLE_MULTIPLICATION = True
+
+def is_fused_triangle_multiplication():
+    global _FUSED_TRIANGLE_MULTIPLICATION
+    return _FUSED_TRIANGLE_MULTIPLICATION
 
 class TriangleMultiplicativeUpdate(nn.Module):
     """
@@ -40,11 +50,16 @@ class TriangleMultiplicativeUpdate(nn.Module):
         self.c_hidden = c_hidden
         self._outgoing = _outgoing
 
-        self.linear_a_p = Linear(self.c_z, self.c_hidden)
-        self.linear_a_g = Linear(self.c_z, self.c_hidden, init="gating")
-        self.linear_b_p = Linear(self.c_z, self.c_hidden)
-        self.linear_b_g = Linear(self.c_z, self.c_hidden, init="gating")
-        self.linear_g = Linear(self.c_z, self.c_z, init="gating")
+        if _FUSED_TRIANGLE_MULTIPLICATION:
+            self.linear_p = Linear(self.c_z, 2 * self.c_hidden)
+            self.linear_g = Linear(self.c_z, 2 * self.c_hidden, init="gating")
+            self.linear_gate = Linear(self.c_z, self.c_z, init="gating")
+        else:
+            self.linear_a_p = Linear(self.c_z, self.c_hidden)
+            self.linear_a_g = Linear(self.c_z, self.c_hidden, init="gating")
+            self.linear_b_p = Linear(self.c_z, self.c_hidden)
+            self.linear_b_g = Linear(self.c_z, self.c_hidden, init="gating")
+            self.linear_g = Linear(self.c_z, self.c_z, init="gating")
         self.linear_z = Linear(self.c_hidden, self.c_z, init="final")
 
         self.layer_norm_in = LayerNorm(self.c_z)
@@ -77,14 +92,25 @@ class TriangleMultiplicativeUpdate(nn.Module):
         mask = mask.unsqueeze(-1)
 
         z = self.layer_norm_in(z)
-        a = self.linear_a_p(z) * self.sigmoid(self.linear_a_g(z))
-        a = a * mask
-        b = self.linear_b_p(z) * self.sigmoid(self.linear_b_g(z))
-        b = b * mask
+        if _FUSED_TRIANGLE_MULTIPLICATION:
+            a = self.linear_p(z) * mask
+            a = self.sigmoid(self.linear_g(z))
+
+            a, b = a.chunk(2, dim=-1)
+        else:
+            a = self.linear_a_p(z) * self.sigmoid(self.linear_a_g(z))
+            a = a * mask
+            b = self.linear_b_p(z) * self.sigmoid(self.linear_b_g(z))
+            b = b * mask
+
         x = self._combine_projections(a, b)
         x = self.layer_norm_out(x)
         x = self.linear_z(x)
-        g = self.sigmoid(self.linear_g(z))
+        
+        if _FUSED_TRIANGLE_MULTIPLICATION:
+            g = self.sigmoid(self.linear_gate(z))
+        else:
+            g = self.sigmoid(self.linear_g(z))
         z = x * g
 
         return z

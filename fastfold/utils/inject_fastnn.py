@@ -18,6 +18,7 @@ from fastfold.model.fastnn import EvoformerStack, ExtraMSAStack
 from fastfold.model.fastnn.embedders import TemplateEmbedder
 from fastfold.model.fastnn.embedders_multimer import TemplateEmbedderMultimer
 from fastfold.model.fastnn.ops import RecyclingEmbedder, InputEmbedder
+from fastfold.model.nn.triangular_multiplicative_update import is_fused_triangle_multiplication
 
 
 def copy_layernorm(model_fast, model_ori):
@@ -72,13 +73,18 @@ def copy_transition(model_fast, model_ori):
 def copy_triangle(model_fast, model_ori):
     copy_layernorm(model_fast.layernorm1, model_ori.layer_norm_in)
     copy_layernorm(model_fast.layernorm2, model_ori.layer_norm_out)
-    copy_linear(model_fast.output_gate, model_ori.linear_g)
+    
     copy_linear(model_fast.output_projection, model_ori.linear_z)
     model_fast.output_bias.copy_(model_ori.linear_z.bias)
 
-    copy_left_right(model_fast.left_right_projection, model_ori.linear_a_p, model_ori.linear_b_p)
-
-    copy_left_right(model_fast.left_right_gate, model_ori.linear_a_g, model_ori.linear_b_g)
+    if is_fused_triangle_multiplication():
+        copy_linear(model_fast.output_gate, model_ori.linear_gate)
+        copy_linear(model_fast.left_right_projection, model_ori.linear_p)
+        copy_linear(model_fast.left_right_gate, model_ori.linear_g)
+    else:
+        copy_linear(model_fast.output_gate, model_ori.linear_g)
+        copy_left_right(model_fast.left_right_projection, model_ori.linear_a_p, model_ori.linear_b_p)
+        copy_left_right(model_fast.left_right_gate, model_ori.linear_a_g, model_ori.linear_b_g)
 
 
 def copy_triangle_att(model_fast, model_ori):
