@@ -90,7 +90,7 @@ class OutProductMean(nn.Module):
         left_act = M_mask_col * left_act
         right_act_all = M_mask * right_act_all
 
-        norm = torch.einsum('...ab,...ad->...bd', M_mask_col.squeeze(-1).squeeze(0), M_mask.squeeze(-1).squeeze(0)).unsqueeze(-1).unsqueeze(0) + 1e-3
+        norm = torch.einsum('...ab,...ad->...bd', M_mask_col.squeeze(-1).squeeze(0), M_mask.squeeze(-1).squeeze(0)).unsqueeze(-1).unsqueeze(0)
 
         para_dim = left_act.shape[2]
         chunk_size = CHUNK_SIZE
@@ -199,7 +199,7 @@ class SelfAttention(nn.Module):
 
             q = self.to_q(in_data_part)
             k = self.to_k(in_data_part)
-            v = self.to_k(in_data_part)
+            v = self.to_v(in_data_part)
 
             q, k, v = map(lambda t: rearrange(t, 'b1 b2 n (h d) -> b1 b2 h n d', h=self.n_head),
                           [q, k, v])
