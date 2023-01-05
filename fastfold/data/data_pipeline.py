@@ -249,7 +249,7 @@ def run_msa_tool(
     max_sto_sequences: Optional[int] = None,
 ) -> Mapping[str, Any]:
     """Runs an MSA tool, checking if output already exists first."""
-    if(msa_format == "sto" and max_sto_sequences is not None):
+    if(msa_format == "sto"):
         result = msa_runner.query(fasta_path, max_sto_sequences)[0]
     else:
         result = msa_runner.query(fasta_path)

@@ -606,3 +606,22 @@ def import_jax_weights_(model, npz_path, version="model_1"):
 
     # Set weights
     assign(flat, data)
+
+    if is_fused_triangle_multiplication():
+        # (NOTE) in multimer v3, alphafold use fused tri, so need change left/right here
+        for b in model.template_embedder.template_pair_stack.blocks:
+            _change_tri_mul_in_left_right(b.tri_mul_in)
+        for b in model.extra_msa_stack.blocks:
+            _change_tri_mul_in_left_right(b.core.tri_mul_in)
+        for b in model.evoformer.blocks:
+            _change_tri_mul_in_left_right(b.core.tri_mul_in)
+
+def _change_tri_mul_in_left_right(module):
+    def _change_para(para):
+        left_right_para = para.clone().chunk(2, dim=0)
+        return torch.cat((left_right_para[1], left_right_para[0]), dim=0)
+    with torch.no_grad():
+        module.linear_p.weight.copy_(_change_para(module.linear_p.weight))
+        module.linear_p.bias.copy_(_change_para(module.linear_p.bias))
+        module.linear_g.weight.copy_(_change_para(module.linear_g.weight))
+        module.linear_g.bias.copy_(_change_para(module.linear_g.bias))
