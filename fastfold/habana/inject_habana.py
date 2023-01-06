@@ -15,6 +15,7 @@
 import torch
 
 from fastfold.habana.fastnn import EvoformerStack, ExtraMSAStack
+
 #from fastfold.model.fastnn.embedders import TemplateEmbedder
 #from fastfold.model.fastnn.embedders_multimer import TemplateEmbedderMultimer
 #from fastfold.model.fastnn.ops import RecyclingEmbedder, InputEmbedder
@@ -77,7 +78,7 @@ def copy_triangle(model_fast, model_ori):
     copy_linear(model_fast.output_gate, model_ori.linear_g)
     copy_linear(model_fast.output_projection, model_ori.linear_z)
     model_fast.output_bias.copy_(model_ori.linear_z.bias)
-    
+
     copy_linear(model_fast.left_projection, model_ori.linear_a_p)
     copy_linear(model_fast.right_projection, model_ori.linear_b_p)
 

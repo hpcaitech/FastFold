@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 from typing import Tuple, List, Callable, Any, Dict, Sequence, Optional
 
+import fastfold.habana as habana
 
 def permute_final_dims(tensor: torch.Tensor, inds: List[int]):
     zero_index = -1 * len(inds)
@@ -407,7 +408,8 @@ def chunk_layer(
     reshape = lambda t: t.view(orig_batch_dims + t.shape[1:])
     out = tensor_tree_map(reshape, out)
 
-    import habana_frameworks.torch.core as htcore
-    htcore.mark_step()
+    if habana.is_habana():
+        import habana_frameworks.torch.core as htcore
+        htcore.mark_step()
 
     return out

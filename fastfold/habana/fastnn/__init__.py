@@ -1,16 +1,16 @@
-from typing import Optional, Tuple
 from functools import partial
+from typing import Optional, Tuple
 
 import torch
-import torch.nn as nn
 import torch.distributed as dist
+import torch.nn as nn
+
+from fastfold.habana.distributed import All_to_All, gather, scatter
 from fastfold.utils.checkpointing import checkpoint_blocks
 
-from .msa import MSAStack, ExtraMSACore
-from .ops import OutProductMean, Linear
+from .msa import ExtraMSACore, MSAStack
+from .ops import Linear, OutProductMean
 from .triangle import PairStack
-
-from fastfold.habana.distributed import gather, scatter, All_to_All
 
 
 class Evoformer(nn.Module):
@@ -312,7 +312,8 @@ class ExtraMSAStack(nn.Module):
     Implements Algorithm 18.
     """
 
-    def __init__(self,
+    def __init__(
+        self,
         c_m: int,
         c_z: int,
         no_blocks: int,
@@ -336,7 +337,8 @@ class ExtraMSAStack(nn.Module):
             )
             self.blocks.append(block)
 
-    def forward(self,
+    def forward(
+        self,
         m: torch.Tensor,
         z: torch.Tensor,
         chunk_size: int,
@@ -351,8 +353,7 @@ class ExtraMSAStack(nn.Module):
                 pair_mask=pair_mask,
                 chunk_size=chunk_size,
                 _mask_trans=_mask_trans,
-            )
-            for b in self.blocks
+            ) for b in self.blocks
         ]
 
         if torch.is_grad_enabled():
