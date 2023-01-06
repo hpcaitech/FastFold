@@ -59,8 +59,8 @@ class Evoformer(nn.Module):
                 m = scatter(m, dim=1)
             z = scatter(z, dim=1)
 
-        msa_mask = msa_mask.unsqueeze(0)
-        pair_mask = pair_mask.unsqueeze(0)
+        # msa_mask = msa_mask.unsqueeze(0)
+        # pair_mask = pair_mask.unsqueeze(0)
 
         msa_mask = torch.nn.functional.pad(msa_mask, (0, padding_size))
         pair_mask = torch.nn.functional.pad(pair_mask, (0, padding_size, 0, padding_size))
@@ -194,6 +194,10 @@ class EvoformerStack(nn.Module):
             s:
                 [*, N_res, C_s] single embedding (or None if extra MSA stack)
         """
+
+        msa_mask = msa_mask.unsqueeze(0)
+        pair_mask = pair_mask.unsqueeze(0)
+
         blocks = [
             partial(
                 b,

@@ -2,7 +2,6 @@ import argparse
 import logging
 import random
 
-import habana_frameworks.torch.core as htcore
 import numpy as np
 import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -15,6 +14,9 @@ from fastfold.habana.distributed import init_dist
 from fastfold.habana.inject_habana import inject_habana
 from fastfold.model.hub import AlphaFold, AlphaFoldLoss, AlphaFoldLRScheduler
 from fastfold.utils.tensor_utils import tensor_tree_map
+
+import habana_frameworks.torch.core as htcore
+from habana_frameworks.torch.hpex import hmp
 
 logging.disable(logging.WARNING)
 
@@ -115,6 +117,28 @@ def main():
                         help="Distillation alignment index. See the README for instructions.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
 
+    # habana arguments
+    parser.add_argument("--hmp",
+                        action='store_true',
+                        default=False,
+                        help="Whether to use habana mixed precision")
+    parser.add_argument("--hmp-bf16",
+                        type=str,
+                        default="./habana/ops_bf16.txt",
+                        help="Path to bf16 ops list in hmp O1 mode")
+    parser.add_argument("--hmp-fp32",
+                        type=str,
+                        default="./habana/ops_fp32.txt",
+                        help="Path to fp32 ops list in hmp O1 mode")
+    parser.add_argument("--hmp-opt-level",
+                        type=str,
+                        default='O1',
+                        help="Choose optimization level for hmp")
+    parser.add_argument("--hmp-verbose",
+                        action='store_true',
+                        default=False,
+                        help='Enable verbose mode for hmp')
+
     args = parser.parse_args()
 
     habana.enable_habana()
@@ -167,6 +191,13 @@ def main():
 
     lr_scheduler = AlphaFoldLRScheduler(optimizer)
 
+    if args.hmp:
+        hmp.convert(opt_level='O1',
+                    bf16_file_path=args.hmp_bf16,
+                    fp32_file_path=args.hmp_fp32,
+                    isVerbose=args.hmp_verbose)
+        print("========= HMP ENABLED!!")
+
     for epoch in range(200):
         model.train()
         train_dataloader = tqdm(train_dataloader)
@@ -181,7 +212,8 @@ def main():
             htcore.mark_step()
             train_dataloader.set_postfix(loss=float(loss))
 
-            optimizer.step()
+            with hmp.disable_casts():
+                optimizer.step()
 
             htcore.mark_step()
 

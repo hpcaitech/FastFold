@@ -487,8 +487,12 @@ def lddt_loss(
 
     score = score.detach()
 
-    bin_index = torch.floor(score * no_bins).long()
-    bin_index = torch.clamp(bin_index, max=(no_bins - 1))
+    if habana.is_habana():
+        bin_index = torch.floor(score * no_bins)
+        bin_index = torch.clamp(bin_index, max=(no_bins - 1)).float().long()
+    else:
+        bin_index = torch.floor(score * no_bins).long()
+        bin_index = torch.clamp(bin_index, max=(no_bins - 1))
     lddt_ca_one_hot = torch.nn.functional.one_hot(
         bin_index, num_classes=no_bins
     )
@@ -1613,6 +1617,9 @@ class AlphaFoldLoss(nn.Module):
                 **batch,
             ),
         }
+
+        if habana.is_habana():
+            del loss_fns["violation"]
 
         if(self.config.tm.enabled):
             loss_fns["tm"] = lambda: tm_loss(
