@@ -16,12 +16,14 @@ from fastfold.data.data_modules import SetupTrainDataset, TrainDataLoader
 from fastfold.utils.tensor_utils import tensor_tree_map
 
 import habana_frameworks.torch.core as htcore
+from habana_frameworks.torch.hpex import hmp
 
 import logging
 logging.disable(logging.WARNING)
 import torch.multiprocessing
 torch.multiprocessing.set_sharing_strategy('file_system')
 
+from habana.hpuhelper import *
 
 def main():
     parser = argparse.ArgumentParser()
@@ -121,6 +123,27 @@ def main():
         "--seed", type=int, default=42,
         help="Random seed"
     )
+    # habana arguments
+    parser.add_argument(
+        "--hmp", action='store_true', default=False,
+        help="Whether to use habana mixed precision"
+    )
+    parser.add_argument(
+        "--hmp-bf16", type=str, default="./habana/ops_bf16.txt",
+        help="Path to bf16 ops list in hmp O1 mode"
+    )
+    parser.add_argument(
+        "--hmp-fp32", type=str, default="./habana/ops_fp32.txt",
+        help="Path to fp32 ops list in hmp O1 mode"
+    )
+    parser.add_argument(
+        "--hmp-opt-level", type=str, default='O1',
+        help="Choose optimization level for hmp"
+    )
+    parser.add_argument(
+        "--hmp-verbose", action='store_true', default=False,
+        help='Enable verbose mode for hmp'
+    )
 
     args = parser.parse_args()
 
@@ -173,10 +196,16 @@ def main():
 
     lr_scheduler = AlphaFoldLRScheduler(optimizer)
     
+    if args.hmp:
+        hmp.convert(opt_level='O1', bf16_file_path=args.hmp_bf16, fp32_file_path=args.hmp_fp32, isVerbose=args.hmp_verbose)
+        print("========= HMP ENABLED!!")
+
     for epoch in range(200):
         model.train()
         train_dataloader = tqdm(train_dataloader)
         for batch in train_dataloader:
+            perf = hpu_perf("train step")
+
             batch = {k: torch.as_tensor(v).to(device="hpu") for k, v in batch.items()}
             optimizer.zero_grad()
             output = model(batch)
@@ -184,13 +213,17 @@ def main():
             loss, loss_breakdown = criterion(
                     output, batch, _return_breakdown=True)
 
+            perf.checknow("forward")
             loss.backward()
             htcore.mark_step()
+            perf.checknow("backward")
             train_dataloader.set_postfix(loss=float(loss))
 
-            optimizer.step()
+            with hmp.disable_casts():
+                optimizer.step()
 
             htcore.mark_step()
+            perf.checknow("optimizer update")
 
         lr_scheduler.step()
         

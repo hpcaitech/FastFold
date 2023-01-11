@@ -486,8 +486,8 @@ def lddt_loss(
 
     score = score.detach()
 
-    bin_index = torch.floor(score * no_bins).long()
-    bin_index = torch.clamp(bin_index, max=(no_bins - 1))
+    bin_index = torch.floor(score * no_bins)
+    bin_index = torch.clamp(bin_index, max=(no_bins - 1)).float().long()
     lddt_ca_one_hot = torch.nn.functional.one_hot(
         bin_index, num_classes=no_bins
     )
@@ -1601,6 +1601,7 @@ class AlphaFoldLoss(nn.Module):
                 out["sm"]["unnormalized_angles"],
                 **{**batch, **self.config.supervised_chi},
             ),
+            # Habana: TODO comment out below part to WA error in HMP
             "violation": lambda: violation_loss(
                 out["violation"],
                 **batch,

@@ -91,7 +91,8 @@ def np_example_to_features(
         np_example=np_example, features=feature_names
     )
 
-    with torch.no_grad():
+    from habana_frameworks.torch.hpex import hmp
+    with torch.no_grad(), hmp.disable_casts():
         if is_multimer:
             features = input_pipeline_multimer.process_tensors_from_config(
                 tensor_dict,

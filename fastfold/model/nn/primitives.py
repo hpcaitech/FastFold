@@ -29,6 +29,7 @@ from fastfold.utils.tensor_utils import (
     _chunk_slice,
 )
 
+from fastfold.habana.fastnn.custom_op import fused_softmax, fused_softmax_bias
 
 def _prod(nums):
     out = 1
@@ -214,11 +215,15 @@ def _attention(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor,
 
     # [*, H, Q, K]
     a = torch.matmul(query, key)
+    # for b in biases:
+    #     a += b
 
-    for b in biases:
-        a += b
+    # a = softmax(a, -1)
 
-    a = softmax(a, -1)
+    if len(biases) == 1:
+        a = fused_softmax(a, biases[0], -1)
+    else:
+        a = fused_softmax_bias(a, biases[0], biases[1], -1)
 
     # [*, H, Q, C_hidden]
     a = a.to(dtype=value.dtype)
@@ -464,8 +469,10 @@ class GlobalAttention(nn.Module):
             k.transpose(-1, -2),  # [*, N_res, C_hidden, N_seq]
         )
         bias = (self.inf * (mask - 1))[..., :, None, :]
-        a += bias
-        a = softmax(a)
+        # a += bias
+        # a = softmax(a)
+
+        a = fused_softmax(a, bias, -1)
 
         # [*, N_res, H, C_hidden]
         a = a.to(dtype=v.dtype)

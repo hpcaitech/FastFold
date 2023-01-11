@@ -121,10 +121,11 @@ class TemplatePointwiseAttention(nn.Module):
 
         # [*, N_res, N_res, 1, C_z]
         biases = [bias]
-        if chunk_size is not None:
-            z = self._chunk(z, t, biases, chunk_size)
-        else:
-            z = self.mha(q_x=z, kv_x=t, biases=biases)
+        # if chunk_size is not None:
+        #     z = self._chunk(z, t, biases, chunk_size)
+        # else:
+        #     z = self.mha(q_x=z, kv_x=t, biases=biases)
+        z = self.mha(q_x=z, kv_x=t, biases=biases)
 
         # [*, N_res, N_res, C_z]
         z = z.squeeze(-2)
