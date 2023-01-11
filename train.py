@@ -1,6 +1,9 @@
 import random
 import torch
 import numpy as np
+
+from torch.utils.tensorboard import SummaryWriter
+
 import colossalai
 from colossalai.logging import disable_existing_loggers, get_dist_logger
 from colossalai.core import global_context as gpc
@@ -9,6 +12,7 @@ from colossalai.nn.optimizer import HybridAdam
 from tqdm import tqdm
 
 from fastfold.config import model_config
+from fastfold.model.optim.lamb import create_lamb_optimizer
 from fastfold.model.hub import AlphaFold, AlphaFoldLRScheduler, AlphaFoldLoss
 from fastfold.utils.inject_fastnn import inject_fastnn
 from fastfold.data.data_modules import SetupTrainDataset, TrainDataLoader
@@ -119,14 +123,17 @@ def main():
     )
 
     args = parser.parse_args()
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)
+
     if args.from_torch:
         colossalai.launch_from_torch(config=dict(torch_ddp=dict(static_graph=True)))
     disable_existing_loggers()
     logger = get_dist_logger()
+
+    args.seed += gpc.get_global_rank()
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
 
     config = model_config(args.config_preset, train=True)
     config.globals.inplace = False
@@ -165,7 +172,10 @@ def main():
 
     criterion = AlphaFoldLoss(config.loss)
 
-    optimizer = HybridAdam(model.parameters(), lr=1e-3, eps=1e-8)
+    lr_ = 1e-5 * gpc.get_world_size(colossalai.context.parallel_mode.ParallelMode.GLOBAL)
+
+    optimizer = create_lamb_optimizer(model=model, lr=lr_)
+    # optimizer = HybridAdam(model.parameters(), lr=lr_)
 
     lr_scheduler = AlphaFoldLRScheduler(optimizer)
     
@@ -178,12 +188,17 @@ def main():
                                                                 train_dataloader=train_dataloader,
                                                                 test_dataloader=test_dataloader,
                                                                 )
+
+    if gpc.get_global_rank() == 0:
+        writer = SummaryWriter()
+
+    traindata_len = len(train_dataloader)
     
     for epoch in range(200):
         engine.train()
         if gpc.get_global_rank() == 0:
             train_dataloader = tqdm(train_dataloader)
-        for batch in train_dataloader:
+        for idx, batch in enumerate(train_dataloader):
             batch = {k: torch.as_tensor(v).cuda() for k, v in batch.items()}
             engine.zero_grad()
             output = engine(batch)
@@ -194,8 +209,11 @@ def main():
                 train_dataloader.set_postfix(loss=float(loss))
             engine.backward(loss)
             engine.step()
-        lr_scheduler.step()
-        
+            lr_scheduler.step()
+            if gpc.get_global_rank() == 0:
+                writer.add_scalar('Loss/train', loss, idx + epoch * traindata_len)
+                writer.add_scalar('Lr/train', lr_scheduler.get_last_lr()[0], idx + epoch * traindata_len)
+
         if test_dataloader is not None:
             engine.eval()
             if gpc.get_global_rank() == 0:
