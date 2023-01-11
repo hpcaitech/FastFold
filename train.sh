@@ -1,4 +1,5 @@
 DATA_DIR=/home1/08694/hpccsg/FastFold/train_data/
+# DATA_DIR=/data/scratch/alphafold/alphafold/openfold/
 PROJECT_DIR=/path/to/project
 
 gpus_per_node=3
@@ -28,3 +29,4 @@ torchrun --standalone --nproc_per_node ${gpus_per_node} --nnodes ${nnodes} train
     --train_chain_data_cache_path=${train_chain_data_cache_path} \
     --template_release_dates_cache_path=${template_release_dates_cache_path} \
     --train_epoch_len=${train_epoch_len} \
+    --wandb

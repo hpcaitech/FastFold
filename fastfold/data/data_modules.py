@@ -621,8 +621,7 @@ def TrainDataLoader(
         generator=generator,
         batch_size=config.data_module.data_loaders.batch_size,
         num_workers=config.data_module.data_loaders.num_workers,
-        collate_fn=train_batch_collator,
-        sampler=train_sampler,
+        collate_fn=train_batch_collator
     )
 
     test_dataloader = None
@@ -638,8 +637,7 @@ def TrainDataLoader(
             generator=generator,
             batch_size=config.data_module.data_loaders.batch_size,
             num_workers=config.data_module.data_loaders.num_workers,
-            collate_fn=test_batch_collator,
-            sampler=test_sampler,
+            collate_fn=test_batch_collator
         )
 
     return train_dataloader, test_dataloader

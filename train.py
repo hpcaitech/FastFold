@@ -4,12 +4,16 @@ import wandb
 import torch
 import torch.distributed as dist
 import numpy as np
+
+from torch.utils.tensorboard import SummaryWriter
+
 import colossalai
 from colossalai.logging import disable_existing_loggers, get_dist_logger
 from colossalai.core import global_context as gpc
 from colossalai.nn.optimizer import HybridAdam
 
 from fastfold.config import model_config
+from fastfold.model.optim.lamb import create_lamb_optimizer
 from fastfold.model.hub import AlphaFold, AlphaFoldLRScheduler, AlphaFoldLoss
 from fastfold.utils.inject_fastnn import inject_fastnn
 from fastfold.data.data_modules import SetupTrainDataset, TrainDataLoader
@@ -20,7 +24,7 @@ from fastfold.utils.validation_utils import compute_validation_metrics
 #logging.disable(logging.WARNING)
 import torch.multiprocessing
 torch.multiprocessing.set_sharing_strategy('file_system')
-
+torch.backends.cuda.matmul.allow_tf32 = True
 
 def log_loss(args, loss_breakdown, batch, outputs, global_step, train=True):
     loss_info = ''
@@ -163,15 +167,18 @@ def main():
     parser.add_argument('--wandb', default=False, action='store_true')
 
     args = parser.parse_args()
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)
+
     if args.from_torch:
         colossalai.launch_from_torch(config=dict(torch_ddp=dict(static_graph=True)))
     disable_existing_loggers()
     logger = get_dist_logger()
     logger.log_to_file(args.log_path)
+
+    args.seed += gpc.get_global_rank()
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
 
     config = model_config(args.config_preset, train=True)
     config.globals.inplace = False
@@ -209,13 +216,12 @@ def main():
         batch_seed=args.seed,
     )
 
-
     criterion = AlphaFoldLoss(config.loss)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, eps=1e-6)
+    lr_ = 1e-5 * gpc.get_world_size(colossalai.context.parallel_mode.ParallelMode.GLOBAL)
 
-    lr_scheduler = AlphaFoldLRScheduler(optimizer)
-    
+    optimizer = create_lamb_optimizer(model=model, lr=lr_)
+    lr_scheduler = AlphaFoldLRScheduler(optimizer, max_lr=lr_)
 
     engine, train_dataloader, test_dataloader, lr_scheduler = colossalai.initialize(
                                                                 model=model,
@@ -225,25 +231,33 @@ def main():
                                                                 train_dataloader=train_dataloader,
                                                                 test_dataloader=test_dataloader,
                                                                 )
+
+    if gpc.get_global_rank() == 0:
+        writer = SummaryWriter()
+
+    traindata_len = len(train_dataloader)
     
 
     logger.info('Start training.', ranks=[0])
     for epoch in range(args.max_epochs):
         engine.train()
-        for i, batch in enumerate(train_dataloader):
+        for idx, batch in enumerate(train_dataloader):
             batch = {k: torch.as_tensor(v).cuda() for k, v in batch.items()}
             output = engine(batch)
             batch = tensor_tree_map(lambda t: t[..., -1], batch)
             loss, loss_breakdown = engine.criterion(
                     output, batch, _return_breakdown=True)
-            if (i+1) % args.log_interval == 0:
-                logger.info(f'Training, Epoch: {epoch}, Step: {i+1}, Global_Step: {epoch*args.train_epoch_len+i+1},' +
-                            f' Loss:{log_loss(args, loss_breakdown, batch, output, epoch*args.train_epoch_len+i+1)}', ranks=[0])
+            if (idx+1) % args.log_interval == 0:
+                logger.info(f'Training, Epoch: {epoch}, Step: {idx+1}, Global_Step: {epoch*args.train_epoch_len+idx+1},' +
+                            f' Loss:{log_loss(args, loss_breakdown, batch, output, epoch*args.train_epoch_len+idx+1)}', ranks=[0])
             engine.zero_grad()
             engine.backward(loss)
             engine.step()
-        lr_scheduler.step()
-        
+            lr_scheduler.step()
+            if gpc.get_global_rank() == 0:
+                writer.add_scalar('Loss/train', loss, idx + epoch * traindata_len)
+                writer.add_scalar('Lr/train', lr_scheduler.get_last_lr()[0], idx + epoch * traindata_len)
+
         if test_dataloader is not None:
             engine.eval()
             for i, batch in enumerate(test_dataloader):
