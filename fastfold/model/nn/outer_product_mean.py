@@ -121,8 +121,7 @@ class OuterProductMean(nn.Module):
             outer = self._opm(a, b)
 
         # [*, N_res, N_res, 1]
-        #norm = torch.einsum("...abc,...adc->...bdc", mask, mask)
-        norm = torch.einsum("...ab,...ad->...bd", mask.squeeze(-1), mask.squeeze(-1)).unsqueeze(-1)
+        norm = torch.einsum("...abc,...adc->...bdc", mask, mask)
 
         # [*, N_res, N_res, C_z]
         outer = outer / (self.eps + norm)

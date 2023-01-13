@@ -1,9 +1,8 @@
 import os
 
-from mpi4py import MPI
-
 import torch
 import torch.distributed as dist
+from mpi4py import MPI
 
 # Data parallel group that the current rank belongs to.
 _DATA_PARALLEL_GROUP = None
@@ -121,4 +120,3 @@ def get_tensor_model_parallel_src_rank():
     global_rank = dist.get_rank()
     local_world_size = get_tensor_model_parallel_world_size()
     return (global_rank // local_world_size) * local_world_size
-

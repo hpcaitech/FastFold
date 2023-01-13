@@ -4,6 +4,8 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch.nn import LayerNorm
 
+from fastfold.habana.distributed import gather, scatter
+
 from .initializer import glorot_uniform_af
 from .kernel import bias_sigmod_ele
 
@@ -91,7 +93,9 @@ class OutProductMean(nn.Module):
         left_act = M_mask_col * left_act
         right_act_all = M_mask * right_act_all
 
-        norm = torch.einsum('...ab,...ad->...bd', M_mask_col.squeeze(-1).squeeze(0), M_mask.squeeze(-1).squeeze(0)).unsqueeze(-1).unsqueeze(0)
+        norm = torch.einsum('...ab,...ad->...bd',
+                            M_mask_col.squeeze(-1).squeeze(0),
+                            M_mask.squeeze(-1).squeeze(0)).unsqueeze(-1).unsqueeze(0)
 
         para_dim = left_act.shape[2]
         chunk_size = CHUNK_SIZE
@@ -242,6 +246,7 @@ class SelfAttention(nn.Module):
 
         return output
 
+
 class GlobalAttention(nn.Module):
     """
     Multi-Head SelfAttention dealing with [batch_size1, batch_size2, len, dim] tensors
@@ -254,7 +259,7 @@ class GlobalAttention(nn.Module):
         self.n_head = n_head
         self.out_dim = out_dim
 
-        self.scaling = self.c ** (-0.5)
+        self.scaling = self.c**(-0.5)
 
         self.eps = 1e-10
         self.inf = 1e9
@@ -263,9 +268,7 @@ class GlobalAttention(nn.Module):
         self.to_kv = Linear(qkv_dim, 2 * c, initializer="linear", use_bias=False)
 
         self.gating_bias = nn.parameter.Parameter(data=torch.ones((n_head * c,)))
-        self.gating_linear = Linear(
-            qkv_dim, n_head * c, initializer="zero", use_bias=False
-        )
+        self.gating_linear = Linear(qkv_dim, n_head * c, initializer="zero", use_bias=False)
 
         self.o_linear = Linear(n_head * c, out_dim, initializer="zero")
 
@@ -279,12 +282,11 @@ class GlobalAttention(nn.Module):
         output = []
         for ax in range(0, para_dim, chunk_size):
 
-            m_part = m[:, ax : ax + chunk_size, :, :]
-            mask_part = mask[:, ax : ax + chunk_size, :]
+            m_part = m[:, ax:ax + chunk_size, :, :]
+            mask_part = mask[:, ax:ax + chunk_size, :]
 
-            q = torch.sum(m_part * mask_part.unsqueeze(-1), dim=-2) / (
-                torch.sum(mask_part, dim=-1)[..., None] + self.eps
-            )
+            q = torch.sum(m_part * mask_part.unsqueeze(-1),
+                          dim=-2) / (torch.sum(mask_part, dim=-1)[..., None] + self.eps)
 
             q = self.to_q(q)
             q = q.view(q.shape[:-1] + (self.n_head, -1))
@@ -301,9 +303,8 @@ class GlobalAttention(nn.Module):
             weighted_avg = rearrange(weighted_avg, "b1 b2 h d -> b1 b2 (h d)")
 
             gate_values = self.gating_linear(m_part)
-            weighted_avg = bias_sigmod_ele(
-                gate_values, self.gating_bias, weighted_avg.unsqueeze(-2)
-            )
+            weighted_avg = bias_sigmod_ele(gate_values, self.gating_bias,
+                                           weighted_avg.unsqueeze(-2))
 
             output.append(self.o_linear(weighted_avg))
 

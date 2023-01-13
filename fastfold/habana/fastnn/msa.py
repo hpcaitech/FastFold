@@ -6,10 +6,10 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch.nn import LayerNorm
 
-from .kernel import bias_dropout_add
-from .ops import SelfAttention, Transition, GlobalAttention
+from fastfold.habana.distributed import gather, row_to_col, scatter
 
-from fastfold.habana.distributed import gather, scatter, row_to_col
+from .kernel import bias_dropout_add
+from .ops import GlobalAttention, SelfAttention, Transition
 
 
 class MSAColumnGlobalAttention(nn.Module):
@@ -73,7 +73,12 @@ class MSARowAttentionWithPairBias(nn.Module):
         M = self.attention(M, M_mask, b)
         dropout_mask = torch.ones_like(M[:, 0:1, :, :], device=M.device, dtype=M.dtype)
 
-        return bias_dropout_add(M, self.out_bias, dropout_mask, M_raw, prob=self.p_drop, training=self.training)
+        return bias_dropout_add(M,
+                                self.out_bias,
+                                dropout_mask,
+                                M_raw,
+                                prob=self.p_drop,
+                                training=self.training)
 
 
 class MSAColumnAttention(nn.Module):

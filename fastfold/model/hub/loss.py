@@ -22,6 +22,7 @@ import torch.nn as nn
 from torch.distributions.bernoulli import Bernoulli
 from typing import Dict, Optional, Tuple
 
+import fastfold.habana as habana
 from fastfold.common import residue_constants
 from fastfold.utils import feats
 from fastfold.utils.rigid_utils import Rotation, Rigid
@@ -486,8 +487,12 @@ def lddt_loss(
 
     score = score.detach()
 
-    bin_index = torch.floor(score * no_bins)
-    bin_index = torch.clamp(bin_index, max=(no_bins - 1)).float().long()
+    if habana.is_habana():
+        bin_index = torch.floor(score * no_bins)
+        bin_index = torch.clamp(bin_index, max=(no_bins - 1)).float().long()
+    else:
+        bin_index = torch.floor(score * no_bins).long()
+        bin_index = torch.clamp(bin_index, max=(no_bins - 1))
     lddt_ca_one_hot = torch.nn.functional.one_hot(
         bin_index, num_classes=no_bins
     )
@@ -931,19 +936,23 @@ def between_residue_clash_loss(
     )
 
     # Backbone C--N bond between subsequent residues is no clash.
-    c_one_hot = torch.tensor([0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], device=residue_index.device)
-    # c_one_hot = torch.nn.functional.one_hot(
-    #     residue_index.new_tensor(2), num_classes=14
-    # )
+    if habana.is_habana():
+        c_one_hot = torch.tensor([0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], device=residue_index.device)
+    else:
+        c_one_hot = torch.nn.functional.one_hot(
+            residue_index.new_tensor(2), num_classes=14
+        )
     c_one_hot = c_one_hot.reshape(
         *((1,) * len(residue_index.shape[:-1])), *c_one_hot.shape
     )
     c_one_hot = c_one_hot.type(fp_type)
 
-    n_one_hot = torch.tensor([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], device=residue_index.device)
-    # n_one_hot = torch.nn.functional.one_hot(
-    #     residue_index.new_tensor(0), num_classes=14
-    # )
+    if habana.is_habana():
+        n_one_hot = torch.tensor([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], device=residue_index.device)
+    else:
+        n_one_hot = torch.nn.functional.one_hot(
+            residue_index.new_tensor(0), num_classes=14
+        )
     n_one_hot = n_one_hot.reshape(
         *((1,) * len(residue_index.shape[:-1])), *n_one_hot.shape
     )
@@ -967,8 +976,10 @@ def between_residue_clash_loss(
         *((1,) * len(residue_index.shape[:-1])), 1
     ).squeeze(-1)
     
-    cys_sg_one_hot = torch.tensor([0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0], device=n_one_hot.device)
-    # cys_sg_one_hot = torch.nn.functional.one_hot(cys_sg_idx, num_classes=14)
+    if habana.is_habana():
+        cys_sg_one_hot = torch.tensor([0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0], device=n_one_hot.device)
+    else:
+        cys_sg_one_hot = torch.nn.functional.one_hot(cys_sg_idx, num_classes=14)
     disulfide_bonds = (
         cys_sg_one_hot[..., None, None, :, None]
         * cys_sg_one_hot[..., None, None, None, :]
@@ -1607,6 +1618,9 @@ class AlphaFoldLoss(nn.Module):
                 **batch,
             ),
         }
+
+        if habana.is_habana():
+            del loss_fns["violation"]
 
         if(self.config.tm.enabled):
             loss_fns["tm"] = lambda: tm_loss(

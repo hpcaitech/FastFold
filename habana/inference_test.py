@@ -1,40 +1,43 @@
-import time
 import pickle
+import time
 
-import torch
-import torch.distributed as dist
 import habana_frameworks.torch.core as htcore
+import torch
 
+import fastfold.habana as habana
 from fastfold.config import model_config
-from fastfold.model.hub import AlphaFold
-
-from fastfold.habana.inject_habana import inject_habana
 from fastfold.habana.distributed import init_dist
 from fastfold.habana.fastnn.ops import set_chunk_size
-
+from fastfold.habana.inject_habana import inject_habana
+from fastfold.model.hub import AlphaFold
 
 def main():
-    init_dist()
+    habana.enable_habana()
 
-    batch = pickle.load(open('./test_batch_512.pkl', 'rb'))
+    init_dist()
+    batch = pickle.load(open('./test_batch.pkl', 'rb'))
 
     model_name = "model_1"
     device = torch.device("hpu")
 
     config = model_config(model_name)
     config.globals.inplace = False
-    config.globals.chunk_size = 512
-    config.globals.hmp_enable = False
+    config.globals.chunk_size = None
+    # habana.enable_hmp()
     model = AlphaFold(config)
     model = inject_habana(model)
     model = model.eval()
     model = model.to(device=device)
 
-    set_chunk_size(model.globals.chunk_size + 1)
+    if config.globals.chunk_size is not None:
+        set_chunk_size(model.globals.chunk_size + 1)
 
-    if config.globals.hmp_enable:
+    if habana.is_hmp():
         from habana_frameworks.torch.hpex import hmp
-        hmp.convert(opt_level='O1', bf16_file_path='./habana/ops_bf16.txt', fp32_file_path='./habana/ops_fp32.txt', isVerbose=False)
+        hmp.convert(opt_level='O1',
+                    bf16_file_path='./habana/ops_bf16.txt',
+                    fp32_file_path='./habana/ops_fp32.txt',
+                    isVerbose=False)
         print("========= AMP ENABLED!!")
 
     with torch.no_grad():
@@ -50,4 +53,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

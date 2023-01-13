@@ -46,23 +46,24 @@ def append_nvcc_threads(nvcc_extra_args):
 
 
 if not torch.cuda.is_available():
-    # https://github.com/NVIDIA/apex/issues/486
-    # Extension builds after https://github.com/pytorch/pytorch/pull/23408 attempt to query torch.cuda.get_device_capability(),
-    # which will fail if you are compiling in an environment without visible GPUs (e.g. during an nvidia-docker build command).
-    print(
-        '\nWarning: Torch did not find available GPUs on this system.\n',
-        'If your intention is to cross-compile, this is not an error.\n'
-        'By default, FastFold will cross-compile for Pascal (compute capabilities 6.0, 6.1, 6.2),\n'
-        'Volta (compute capability 7.0), Turing (compute capability 7.5),\n'
-        'and, if the CUDA version is >= 11.0, Ampere (compute capability 8.0).\n'
-        'If you wish to cross-compile for a single specific architecture,\n'
-        'export TORCH_CUDA_ARCH_LIST="compute capability" before running setup.py.\n')
-    if os.environ.get("TORCH_CUDA_ARCH_LIST", None) is None:
-        _, bare_metal_major, _ = get_cuda_bare_metal_version(CUDA_HOME)
-        if int(bare_metal_major) == 11:
-            os.environ["TORCH_CUDA_ARCH_LIST"] = "6.0;6.1;6.2;7.0;7.5;8.0"
-        else:
-            os.environ["TORCH_CUDA_ARCH_LIST"] = "6.0;6.1;6.2;7.0;7.5"
+    print("======== NOTICE: torch.cuda.is_available == False")
+#     # https://github.com/NVIDIA/apex/issues/486
+#     # Extension builds after https://github.com/pytorch/pytorch/pull/23408 attempt to query torch.cuda.get_device_capability(),
+#     # which will fail if you are compiling in an environment without visible GPUs (e.g. during an nvidia-docker build command).
+#     print(
+#         '\nWarning: Torch did not find available GPUs on this system.\n',
+#         'If your intention is to cross-compile, this is not an error.\n'
+#         'By default, FastFold will cross-compile for Pascal (compute capabilities 6.0, 6.1, 6.2),\n'
+#         'Volta (compute capability 7.0), Turing (compute capability 7.5),\n'
+#         'and, if the CUDA version is >= 11.0, Ampere (compute capability 8.0).\n'
+#         'If you wish to cross-compile for a single specific architecture,\n'
+#         'export TORCH_CUDA_ARCH_LIST="compute capability" before running setup.py.\n')
+#     if os.environ.get("TORCH_CUDA_ARCH_LIST", None) is None:
+#         _, bare_metal_major, _ = get_cuda_bare_metal_version(CUDA_HOME)
+#         if int(bare_metal_major) == 11:
+#             os.environ["TORCH_CUDA_ARCH_LIST"] = "6.0;6.1;6.2;7.0;7.5;8.0"
+#         else:
+#             os.environ["TORCH_CUDA_ARCH_LIST"] = "6.0;6.1;6.2;7.0;7.5"
 
 print("\n\ntorch.__version__  = {}\n\n".format(torch.__version__))
 TORCH_MAJOR = int(torch.__version__.split('.')[0])
@@ -82,11 +83,7 @@ ext_modules = []
 # https://github.com/pytorch/pytorch/commit/eb7b39e02f7d75c26d8a795ea8c7fd911334da7e#diff-4632522f237f1e4e728cb824300403ac
 version_dependent_macros = ['-DVERSION_GE_1_1', '-DVERSION_GE_1_3', '-DVERSION_GE_1_5']
 
-if CUDA_HOME is None:
-    raise RuntimeError(
-        "Are you sure your environment has nvcc available?  If you're installing within a container from https://hub.docker.com/r/pytorch/pytorch, only images whose names contain 'devel' will provide nvcc."
-    )
-else:
+if CUDA_HOME:
     # check_cuda_torch_binary_vs_bare_metal(CUDA_HOME)
 
     def cuda_ext_helper(name, sources, extra_cuda_flags):
@@ -126,6 +123,8 @@ else:
     ext_modules.append(
         cuda_ext_helper('fastfold_softmax_cuda', ['softmax_cuda.cpp', 'softmax_cuda_kernel.cu'],
                         extra_cuda_flags + cc_flag))
+else:
+    print("======== NOTICE: install without cuda kernel")
 
 setup(
     name='fastfold',

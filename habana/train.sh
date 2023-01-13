@@ -17,7 +17,7 @@ train_chain_data_cache_path=${DATA_DIR}/chain_data_cache.json  # a separate chai
 
 train_epoch_len=10000  # virtual length of each training epoch, which affects frequency of validation & checkpointing
 
-mpirun --allow-run-as-root --bind-to none -np ${hpus_per_node} python train_habana.py \
+mpirun --allow-run-as-root --bind-to none -np ${hpus_per_node} python habana/train.py \
     --from_torch \
     --template_mmcif_dir=${template_mmcif_dir} \
     --max_template_date=${max_template_date} \

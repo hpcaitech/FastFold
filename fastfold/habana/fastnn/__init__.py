@@ -1,16 +1,16 @@
-from typing import Optional, Tuple
 from functools import partial
+from typing import Optional, Tuple
 
 import torch
-import torch.nn as nn
 import torch.distributed as dist
+import torch.nn as nn
+
+from fastfold.habana.distributed import All_to_All, gather, scatter
 from fastfold.utils.checkpointing import checkpoint_blocks
 
-from .msa import MSAStack, ExtraMSACore
-from .ops import OutProductMean, Linear
+from .msa import ExtraMSACore, MSAStack
+from .ops import Linear, OutProductMean
 from .triangle import PairStack
-
-from fastfold.habana.distributed import gather, scatter, All_to_All
 
 
 class Evoformer(nn.Module):
@@ -59,8 +59,8 @@ class Evoformer(nn.Module):
                 m = scatter(m, dim=1)
             z = scatter(z, dim=1)
 
-        msa_mask = msa_mask.unsqueeze(0)
-        pair_mask = pair_mask.unsqueeze(0)
+        # msa_mask = msa_mask.unsqueeze(0)
+        # pair_mask = pair_mask.unsqueeze(0)
 
         msa_mask = torch.nn.functional.pad(msa_mask, (0, padding_size))
         pair_mask = torch.nn.functional.pad(pair_mask, (0, padding_size, 0, padding_size))
@@ -194,6 +194,10 @@ class EvoformerStack(nn.Module):
             s:
                 [*, N_res, C_s] single embedding (or None if extra MSA stack)
         """
+
+        msa_mask = msa_mask.unsqueeze(0)
+        pair_mask = pair_mask.unsqueeze(0)
+
         blocks = [
             partial(
                 b,
@@ -312,7 +316,8 @@ class ExtraMSAStack(nn.Module):
     Implements Algorithm 18.
     """
 
-    def __init__(self,
+    def __init__(
+        self,
         c_m: int,
         c_z: int,
         no_blocks: int,
@@ -336,7 +341,8 @@ class ExtraMSAStack(nn.Module):
             )
             self.blocks.append(block)
 
-    def forward(self,
+    def forward(
+        self,
         m: torch.Tensor,
         z: torch.Tensor,
         chunk_size: int,
@@ -351,8 +357,7 @@ class ExtraMSAStack(nn.Module):
                 pair_mask=pair_mask,
                 chunk_size=chunk_size,
                 _mask_trans=_mask_trans,
-            )
-            for b in self.blocks
+            ) for b in self.blocks
         ]
 
         if torch.is_grad_enabled():

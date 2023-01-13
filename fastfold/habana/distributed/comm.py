@@ -4,9 +4,9 @@ import torch
 import torch.distributed as dist
 from torch import Tensor
 
-from .core import (get_tensor_model_parallel_group, get_tensor_model_parallel_rank,
+from .core import (ensure_divisibility, get_tensor_model_parallel_group,
+                   get_tensor_model_parallel_rank,
                    get_tensor_model_parallel_world_size)
-from .core import ensure_divisibility
 
 
 def divide(numerator, denominator):
@@ -47,10 +47,18 @@ def _gather(tensor: Tensor, dim: int = -1) -> Tensor:
         output_shape[1] *= get_tensor_model_parallel_world_size()
         output = torch.empty(output_shape, dtype=tensor.dtype, device=tensor.device)
         tensor_list = output.chunk(get_tensor_model_parallel_world_size(), dim=1)
-        dist.all_gather(list(tensor_list), tensor, group=get_tensor_model_parallel_group(), async_op=False)
+        dist.all_gather(list(tensor_list),
+                        tensor,
+                        group=get_tensor_model_parallel_group(),
+                        async_op=False)
     else:
-        tensor_list = [torch.empty_like(tensor) for _ in range(get_tensor_model_parallel_world_size())]
-        dist.all_gather(tensor_list, tensor, group=get_tensor_model_parallel_group(), async_op=False)
+        tensor_list = [
+            torch.empty_like(tensor) for _ in range(get_tensor_model_parallel_world_size())
+        ]
+        dist.all_gather(tensor_list,
+                        tensor,
+                        group=get_tensor_model_parallel_group(),
+                        async_op=False)
         output = torch.cat(tensor_list, dim=dim)
 
     return output
