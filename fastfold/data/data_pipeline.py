@@ -270,7 +270,7 @@ class AlignmentRunner:
         uniref90_database_path: Optional[str] = None,
         mgnify_database_path: Optional[str] = None,
         bfd_database_path: Optional[str] = None,
-        uniclust30_database_path: Optional[str] = None,
+        uniref30_database_path: Optional[str] = None,
         pdb70_database_path: Optional[str] = None,
         use_small_bfd: Optional[bool] = None,
         no_cpus: Optional[int] = None,
@@ -296,14 +296,14 @@ class AlignmentRunner:
                 Path to BFD database. Depending on the value of use_small_bfd,
                 one of hhblits_binary_path or jackhmmer_binary_path must be 
                 provided.
-            uniclust30_database_path:
-                Path to uniclust30. Searched alongside BFD if use_small_bfd is 
+            uniref30_database_path:
+                Path to uniref30. Searched alongside BFD if use_small_bfd is 
                 false.
             pdb70_database_path:
                 Path to pdb70 database.
             use_small_bfd:
                 Whether to search the BFD database alone with jackhmmer or 
-                in conjunction with uniclust30 with hhblits.
+                in conjunction with uniref30 with hhblits.
             no_cpus:
                 The number of CPUs available for alignment. By default, all
                 CPUs are used.
@@ -367,7 +367,7 @@ class AlignmentRunner:
             )
    
         self.jackhmmer_small_bfd_runner = None
-        self.hhblits_bfd_uniclust_runner = None
+        self.hhblits_bfd_uniref_runner = None
         if(bfd_database_path is not None):
             if use_small_bfd:
                 self.jackhmmer_small_bfd_runner = jackhmmer.Jackhmmer(
@@ -377,9 +377,9 @@ class AlignmentRunner:
                 )
             else:
                 dbs = [bfd_database_path]
-                if(uniclust30_database_path is not None):
-                    dbs.append(uniclust30_database_path)
-                self.hhblits_bfd_uniclust_runner = hhblits.HHBlits(
+                if(uniref30_database_path is not None):
+                    dbs.append(uniref30_database_path)
+                self.hhblits_bfd_uniref_runner = hhblits.HHBlits(
                     binary_path=hhblits_binary_path,
                     databases=dbs,
                     n_cpu=no_cpus,
@@ -446,14 +446,14 @@ class AlignmentRunner:
             bfd_out_path = os.path.join(output_dir, "small_bfd_hits.sto")
             with open(bfd_out_path, "w") as f:
                 f.write(jackhmmer_small_bfd_result["sto"])
-        elif(self.hhblits_bfd_uniclust_runner is not None):
-            hhblits_bfd_uniclust_result = (
-                self.hhblits_bfd_uniclust_runner.query(fasta_path)
+        elif(self.hhblits_bfd_uniref_runner is not None):
+            hhblits_bfd_uniref_result = (
+                self.hhblits_bfd_uniref_runner.query(fasta_path)
             )
             if output_dir is not None:
-                bfd_out_path = os.path.join(output_dir, "bfd_uniclust_hits.a3m")
+                bfd_out_path = os.path.join(output_dir, "bfd_uniref_hits.a3m")
                 with open(bfd_out_path, "w") as f:
-                    f.write(hhblits_bfd_uniclust_result["a3m"])
+                    f.write(hhblits_bfd_uniref_result["a3m"])
 
 
 
@@ -470,7 +470,7 @@ class AlignmentRunnerMultimer:
         uniref90_database_path: Optional[str] = None,
         mgnify_database_path: Optional[str] = None,
         bfd_database_path: Optional[str] = None,
-        uniclust30_database_path: Optional[str] = None,
+        uniref30_database_path: Optional[str] = None,
         uniprot_database_path: Optional[str] = None,
         pdb_seqres_database_path: Optional[str] = None,
         use_small_bfd: Optional[bool] = None,
@@ -495,12 +495,12 @@ class AlignmentRunnerMultimer:
                 Path to BFD database. Depending on the value of use_small_bfd,
                 one of hhblits_binary_path or jackhmmer_binary_path must be 
                 provided.
-            uniclust30_database_path:
-                Path to uniclust30. Searched alongside BFD if use_small_bfd is 
+            uniref30_database_path:
+                Path to uniref30. Searched alongside BFD if use_small_bfd is 
                 false.
             use_small_bfd:
                 Whether to search the BFD database alone with jackhmmer or 
-                in conjunction with uniclust30 with hhblits.
+                in conjunction with uniref30 with hhblits.
             no_cpus:
                 The number of CPUs available for alignment. By default, all
                 CPUs are used.
@@ -559,7 +559,7 @@ class AlignmentRunnerMultimer:
             )
    
         self.jackhmmer_small_bfd_runner = None
-        self.hhblits_bfd_uniclust_runner = None
+        self.hhblits_bfd_uniref_runner = None
         if(bfd_database_path is not None):
             if use_small_bfd:
                 self.jackhmmer_small_bfd_runner = jackhmmer.Jackhmmer(
@@ -569,9 +569,9 @@ class AlignmentRunnerMultimer:
                 )
             else:
                 dbs = [bfd_database_path]
-                if(uniclust30_database_path is not None):
-                    dbs.append(uniclust30_database_path)
-                self.hhblits_bfd_uniclust_runner = hhblits.HHBlits(
+                if(uniref30_database_path is not None):
+                    dbs.append(uniref30_database_path)
+                self.hhblits_bfd_uniref_runner = hhblits.HHBlits(
                     binary_path=hhblits_binary_path,
                     databases=dbs,
                     n_cpu=no_cpus,
@@ -647,10 +647,10 @@ class AlignmentRunnerMultimer:
                 msa_out_path=bfd_out_path,
                 msa_format="sto",
             )
-        elif(self.hhblits_bfd_uniclust_runner is not None):
-            bfd_out_path = os.path.join(output_dir, "bfd_uniclust_hits.a3m")
-            hhblits_bfd_uniclust_result = run_msa_tool(
-                msa_runner=self.hhblits_bfd_uniclust_runner,
+        elif(self.hhblits_bfd_uniref_runner is not None):
+            bfd_out_path = os.path.join(output_dir, "bfd_uniref_hits.a3m")
+            hhblits_bfd_uniref_result = run_msa_tool(
+                msa_runner=self.hhblits_bfd_uniref_runner,
                 fasta_path=fasta_path,
                 msa_out_path=bfd_out_path,
                 msa_format="a3m",

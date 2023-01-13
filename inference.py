@@ -71,7 +71,7 @@ def add_data_args(parser: argparse.ArgumentParser):
         default=None,
     )
     parser.add_argument(
-        '--uniclust30_database_path',
+        '--uniref30_database_path',
         type=str,
         default=None,
     )
@@ -181,7 +181,7 @@ def inference_multimer_model(args):
                     uniref90_database_path=args.uniref90_database_path,
                     mgnify_database_path=args.mgnify_database_path,
                     bfd_database_path=args.bfd_database_path,
-                    uniclust30_database_path=args.uniclust30_database_path,
+                    uniref30_database_path=args.uniref30_database_path,
                     uniprot_database_path=args.uniprot_database_path,
                     pdb_seqres_database_path=args.pdb_seqres_database_path,
                     use_small_bfd=(args.bfd_database_path is None),
@@ -196,7 +196,7 @@ def inference_multimer_model(args):
                     uniref90_database_path=args.uniref90_database_path,
                     mgnify_database_path=args.mgnify_database_path,
                     bfd_database_path=args.bfd_database_path,
-                    uniclust30_database_path=args.uniclust30_database_path,
+                    uniref30_database_path=args.uniref30_database_path,
                     uniprot_database_path=args.uniprot_database_path,
                     pdb_seqres_database_path=args.pdb_seqres_database_path,
                     use_small_bfd=(args.bfd_database_path is None),
@@ -341,7 +341,7 @@ def inference_monomer_model(args):
         assert args.bfd_database_path is not None
     else:
         assert args.bfd_database_path is not None
-        assert args.uniclust30_database_path is not None
+        assert args.uniref30_database_path is not None
 
     data_processor = data_pipeline.DataPipeline(template_featurizer=template_featurizer,)
 
@@ -385,7 +385,7 @@ def inference_monomer_model(args):
                 uniref90_database_path=args.uniref90_database_path,
                 mgnify_database_path=args.mgnify_database_path,
                 bfd_database_path=args.bfd_database_path,
-                uniclust30_database_path=args.uniclust30_database_path,
+                uniref30_database_path=args.uniref30_database_path,
                 pdb70_database_path=args.pdb70_database_path,
                 use_small_bfd=use_small_bfd,
                 no_cpus=args.cpus,
@@ -401,7 +401,7 @@ def inference_monomer_model(args):
                 uniref90_database_path=args.uniref90_database_path,
                 mgnify_database_path=args.mgnify_database_path,
                 bfd_database_path=args.bfd_database_path,
-                uniclust30_database_path=args.uniclust30_database_path,
+                uniref30_database_path=args.uniref30_database_path,
                 pdb70_database_path=args.pdb70_database_path,
                 use_small_bfd=use_small_bfd,
                 no_cpus=args.cpus,

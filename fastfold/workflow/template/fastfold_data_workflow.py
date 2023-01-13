@@ -16,7 +16,7 @@ class FastFoldDataWorkFlow:
         uniref90_database_path: Optional[str] = None,
         mgnify_database_path: Optional[str] = None,
         bfd_database_path: Optional[str] = None,
-        uniclust30_database_path: Optional[str] = None,
+        uniref30_database_path: Optional[str] = None,
         pdb70_database_path: Optional[str] = None,
         use_small_bfd: Optional[bool] = None,
         no_cpus: Optional[int] = None,
@@ -154,13 +154,13 @@ class FastFoldDataWorkFlow:
 
         if not self.use_small_bfd:
             # Run HHBlits on BFD
-            bfd_out_path = os.path.join(alignment_dir, "bfd_uniclust_hits.a3m")
+            bfd_out_path = os.path.join(alignment_dir, "bfd_uniref_hits.a3m")
             # generate workflow for STEP4
             bfd_node = self.hhblits_bfd_factory.gen_node(fasta_path, bfd_out_path)
 
         else:
             # Run Jackhmmer on small_bfd
-            bfd_out_path = os.path.join(alignment_dir, "bfd_uniclust_hits.a3m")
+            bfd_out_path = os.path.join(alignment_dir, "bfd_uniref_hits.a3m")
             # generate workflow for STEP4_2
             bfd_node = self.jackhmmer_small_bfd_factory.gen_node(fasta_path, bfd_out_path, output_format="sto")
 
