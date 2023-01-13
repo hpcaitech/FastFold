@@ -39,6 +39,7 @@ from fastfold.utils.tensor_utils import (
     flatten_final_dims,
 )
 
+import fastfold.habana as habana
 
 class AngleResnetBlock(nn.Module):
     def __init__(self, c_hidden):
@@ -804,8 +805,9 @@ class StructureModule(nn.Module):
             if i < (self.no_blocks - 1):
                 rigids = rigids.stop_rot_gradient()
 
-            import habana_frameworks.torch.core as htcore
-            htcore.mark_step()
+            if habana.is_habana():
+                import habana_frameworks.torch.core as htcore
+                htcore.mark_step()
 
         outputs = dict_multimap(torch.stack, outputs)
         outputs["single"] = s

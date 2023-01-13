@@ -12,6 +12,7 @@ from .msa import ExtraMSACore, MSAStack
 from .ops import Linear, OutProductMean
 from .triangle import PairStack
 
+import habana_frameworks.torch.core as htcore
 
 class Evoformer(nn.Module):
 
@@ -90,7 +91,6 @@ class Evoformer(nn.Module):
             m = m[:, :-padding_size, :]
             z = z[:-padding_size, :-padding_size, :]
 
-        import habana_frameworks.torch.core as htcore
         htcore.mark_step()
 
         return m, z
@@ -220,7 +220,6 @@ class EvoformerStack(nn.Module):
 
         s = self.linear(m[..., 0, :, :])
 
-        import habana_frameworks.torch.core as htcore
         htcore.mark_step()
 
         return m, z, s
@@ -254,7 +253,6 @@ class ExtraMSABlock(nn.Module):
         _mask_trans: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
 
-        import habana_frameworks.torch.core as htcore
         htcore.mark_step()
 
         dap_size = dist.get_world_size()

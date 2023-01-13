@@ -66,14 +66,14 @@ class FusedSoftmaxBiasFunction(torch.autograd.Function):
 ENABLE_OPT = True
 
 def fused_softmax(input, mask, dim):
-    if input[..., :, :1, :1, :].shape == mask.shape and ENABLE_OPT:
+    if ENABLE_OPT and input[..., :, :1, :1, :].shape == mask.shape:
         return FusedSoftmaxFunction.apply(input, mask, dim)
     else:
         input += mask
         return torch.softmax(input, dim=dim)
 
 def fused_softmax_bias(input, mask, bias, dim):
-    if input[..., :, :1, :1, :].shape == mask.shape and input[..., :1, :, :, :].shape == bias.shape and ENABLE_OPT:
+    if ENABLE_OPT and input[..., :, :1, :1, :].shape == mask.shape and input[..., :1, :, :, :].shape == bias.shape:
         return FusedSoftmaxBiasFunction.apply(input, mask, bias, dim)
     else:
         input += mask
