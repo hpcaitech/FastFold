@@ -23,7 +23,7 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 def log_loss(loss_breakdown, batch, outputs, train=True):
     loss_info = ''
     for loss_name, loss_value in loss_breakdown.items():
-        loss_info += f' {loss_name}={loss_value};'
+        loss_info += (f' {loss_name}=' + "{:.3f}".format(loss_value))
     with torch.no_grad():
         other_metrics = compute_validation_metrics(
             batch, 
@@ -31,7 +31,7 @@ def log_loss(loss_breakdown, batch, outputs, train=True):
             superimposition_metrics=(not train)
         )
     for loss_name, loss_value in other_metrics.items():
-        loss_info += f' {loss_name}={loss_value};'
+        loss_info += (f' {loss_name}=' + "{:.3f}".format(loss_value))
     return loss_info
 
 
@@ -227,8 +227,8 @@ def main():
             loss, loss_breakdown = engine.criterion(
                     output, batch, _return_breakdown=True)
             if (i+1) % args.log_interval == 0:
-                logger.info(f'Training, Epoch: {epoch}, Iter: {i+1}, \
-                            Loss:{log_loss(loss_breakdown, batch, output)}', ranks=[0])
+                logger.info(f'Training, Epoch: {epoch}, Step: {i+1}, Global_Step: {epoch*args.train_epoch_len+i+1},' +
+                            f' Loss:{log_loss(loss_breakdown, batch, output)}', ranks=[0])
             engine.zero_grad()
             engine.backward(loss)
             engine.step()
@@ -244,7 +244,7 @@ def main():
                     batch["use_clamped_fape"] = 0.
                     _, loss_breakdown = engine.criterion(
                             output, batch, _return_breakdown=True)
-                    logger.info(f'Validation, Epoch: {epoch}, Iter: {i+1}, \
+                    logger.info(f'Validation, Step: {i+1}, \
                                 Loss:{log_loss(loss_breakdown, batch, output, False)}', ranks=[0])
         
         if (args.save_ckpt_path is not None) and ( (epoch+1) % args.save_ckpt_interval == 0):
