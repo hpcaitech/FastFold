@@ -866,7 +866,10 @@ def _process_single_hit(
             kalign_binary_path=kalign_binary_path,
             _zero_center_positions=_zero_center_positions,
         )
-        features["template_sum_probs"] = [hit.sum_probs]
+        if hit.sum_probs is None:
+            features['template_sum_probs'] = [0]
+        else:
+            features["template_sum_probs"] = [hit.sum_probs]
 
         # It is possible there were some errors when parsing the other chains in the
         # mmCIF file, but the template features for the chain we want were still
