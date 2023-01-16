@@ -4,10 +4,17 @@
 
 [![](https://img.shields.io/badge/Paper-PDF-green?style=flat&logo=arXiv&logoColor=green)](https://arxiv.org/abs/2203.00854)
 ![](https://img.shields.io/badge/Made%20with-ColossalAI-blueviolet?style=flat)
+![](https://img.shields.io/badge/Habana-support-blue?style=flat&logo=intel&logoColor=blue)
 ![](https://img.shields.io/github/v/release/hpcaitech/FastFold)
 [![GitHub license](https://img.shields.io/github/license/hpcaitech/FastFold)](https://github.com/hpcaitech/FastFold/blob/main/LICENSE)
 
-Optimizing Protein Structure Prediction Model Training and Inference on GPU Clusters
+## News :triangular_flag_on_post:
+- [2023/01] Compatible with AlphaFold v2.3
+- [2023/01] Added support for inference and training of AlphaFold on [Intel Habana](https://habana.ai/) platform. For usage instructions, see [here](#Inference-or-Training-on-Intel-Habana).
+
+<br>
+
+Optimizing Protein Structure Prediction Model Training and Inference on Heterogeneous Clusters
 
 FastFold provides a **high-performance implementation of Evoformer** with the following characteristics.
 
@@ -201,6 +208,17 @@ python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
     --kalign_binary_path `which kalign`
 ```
 
+### Inference or Training on Intel Habana
+
+To run AlphaFold inference or training on Intel Habana, you can follow the instructions in the [Installation Guide](https://docs.habana.ai/en/latest/Installation_Guide/) to set up your environment on Amazon EC2 DL1 instances or on-premise environments.
+
+Once you have prepared your dataset and installed fastfold, you can use the following scripts:
+
+```shell
+bash habana/inference.sh
+bash habana/train.sh
+```
+
 ## Performance Benchmark
 
 We have included a performance benchmark script in `./benchmark`. You can benchmark the performance of Evoformer using different settings.
@@ -237,3 +255,7 @@ Cite this paper, if you use FastFold in your research publication.
       primaryClass={cs.LG}
 }
 ```
+
+## Acknowledgments
+
+We would like to extend our special thanks to the Intel Habana team for their support in providing us with technology and resources on the Habana platform.

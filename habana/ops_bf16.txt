@@ -1,0 +1,15 @@
+addmm
+conv2d
+max_pool2d
+sum
+relu
+mm
+bmm
+mv
+linear
+t
+mul
+sub
+add
+truediv
+layer_norm

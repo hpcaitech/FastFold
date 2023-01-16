@@ -40,6 +40,7 @@ from fastfold.utils.tensor_utils import (
     flatten_final_dims,
 )
 
+import fastfold.habana as habana
 
 class TemplatePointwiseAttention(nn.Module):
     """
@@ -121,10 +122,13 @@ class TemplatePointwiseAttention(nn.Module):
 
         # [*, N_res, N_res, 1, C_z]
         biases = [bias]
-        if chunk_size is not None:
-            z = self._chunk(z, t, biases, chunk_size)
-        else:
+        if habana.is_habana():
             z = self.mha(q_x=z, kv_x=t, biases=biases)
+        else:
+            if chunk_size is not None:
+                z = self._chunk(z, t, biases, chunk_size)
+            else:
+                z = self.mha(q_x=z, kv_x=t, biases=biases)
 
         # [*, N_res, N_res, C_z]
         z = z.squeeze(-2)

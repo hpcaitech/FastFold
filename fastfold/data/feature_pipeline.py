@@ -20,6 +20,7 @@ import ml_collections
 import numpy as np
 import torch
 
+import fastfold.habana as habana
 from fastfold.data import input_pipeline, input_pipeline_multimer
 
 
@@ -91,19 +92,18 @@ def np_example_to_features(
         np_example=np_example, features=feature_names
     )
 
-    with torch.no_grad():
-        if is_multimer:
-            features = input_pipeline_multimer.process_tensors_from_config(
-                tensor_dict,
-                cfg.common,
-                cfg[mode],
-            )
-        else:
-            features = input_pipeline.process_tensors_from_config(
-                tensor_dict,
-                cfg.common,
-                cfg[mode],
-            )
+    if is_multimer:
+        input_pipeline_fn = input_pipeline_multimer.process_tensors_from_config
+    else:
+        input_pipeline_fn = input_pipeline.process_tensors_from_config
+
+    if habana.is_habana():
+        from habana_frameworks.torch.hpex import hmp
+        with torch.no_grad(), hmp.disable_casts():
+            features = input_pipeline_fn(tensor_dict, cfg.common, cfg[mode])
+    else:
+        with torch.no_grad():
+            features = input_pipeline_fn(tensor_dict, cfg.common, cfg[mode])
 
     return {k: v for k, v in features.items()}
 
@@ -118,7 +118,7 @@ class FeaturePipeline:
     def process_features(
         self,
         raw_features: FeatureDict,
-        mode: str = "train", 
+        mode: str = "train",
         is_multimer: bool = False,
     ) -> FeatureDict:
         return np_example_to_features(

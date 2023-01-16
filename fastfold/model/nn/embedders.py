@@ -360,7 +360,7 @@ class TemplateAngleEmbedder(nn.Module):
         Returns:
             x: [*, N_templ, N_res, C_out] embedding
         """
-        x = self.linear_1(x)
+        x = self.linear_1(x.to(dtype=self.linear_1.weight.dtype))
         x = self.relu(x)
         x = self.linear_2(x)
 
@@ -446,6 +446,6 @@ class ExtraMSAEmbedder(nn.Module):
         Returns:
             [*, N_extra_seq, N_res, C_out] embedding
         """
-        x = self.linear(x)
+        x = self.linear(x.to(dtype=self.linear.weight.dtype))
 
         return x
