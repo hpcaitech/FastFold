@@ -1,3 +1,4 @@
+import os
 import random
 import torch
 import numpy as np
@@ -6,18 +7,33 @@ from colossalai.logging import disable_existing_loggers, get_dist_logger
 from colossalai.core import global_context as gpc
 from colossalai.nn.optimizer import HybridAdam
 
-from tqdm import tqdm
-
 from fastfold.config import model_config
 from fastfold.model.hub import AlphaFold, AlphaFoldLRScheduler, AlphaFoldLoss
 from fastfold.utils.inject_fastnn import inject_fastnn
 from fastfold.data.data_modules import SetupTrainDataset, TrainDataLoader
 from fastfold.utils.tensor_utils import tensor_tree_map
+from fastfold.utils.validation_utils import compute_validation_metrics
 
-import logging
-logging.disable(logging.WARNING)
+#import logging
+#logging.disable(logging.WARNING)
 import torch.multiprocessing
 torch.multiprocessing.set_sharing_strategy('file_system')
+
+
+def log_loss(loss_breakdown, batch, outputs, train=True):
+    loss_info = ''
+    for loss_name, loss_value in loss_breakdown.items():
+        loss_info += (f' {loss_name}=' + "{:.3f}".format(loss_value))
+    with torch.no_grad():
+        other_metrics = compute_validation_metrics(
+            batch, 
+            outputs,
+            superimposition_metrics=(not train)
+        )
+    for loss_name, loss_value in other_metrics.items():
+        loss_info += (f' {loss_name}=' + "{:.3f}".format(loss_value))
+    return loss_info
+
 
 def main():
     parser = colossalai.get_default_parser()
@@ -117,6 +133,26 @@ def main():
         "--seed", type=int, default=42,
         help="Random seed"
     )
+    parser.add_argument(
+        "--max_epochs", type=int, default=10000,
+        help="The Max epochs of train"
+    )
+    parser.add_argument(
+        "--log_interval", type=int, default=1,
+        help="The interval steps of logging during training"
+    )
+    parser.add_argument(
+        "--log_path", type=str, default='train_log',
+        help="The path of log folder"
+    )
+    parser.add_argument(
+        "--save_ckpt_path", type=str, default=None,
+        help="The path where to save checkpoint, None means not save"
+    )
+    parser.add_argument(
+        "--save_ckpt_interval", type=int, default=1,
+        help="The interval epochs of save checkpoint"
+    )
 
     args = parser.parse_args()
     random.seed(args.seed)
@@ -127,6 +163,7 @@ def main():
         colossalai.launch_from_torch(config=dict(torch_ddp=dict(static_graph=True)))
     disable_existing_loggers()
     logger = get_dist_logger()
+    logger.log_to_file(args.log_path)
 
     config = model_config(args.config_preset, train=True)
     config.globals.inplace = False
@@ -179,38 +216,40 @@ def main():
                                                                 test_dataloader=test_dataloader,
                                                                 )
     
-    for epoch in range(200):
+
+    logger.info('Start training.', ranks=[0])
+    for epoch in range(args.max_epochs):
         engine.train()
-        if gpc.get_global_rank() == 0:
-            train_dataloader = tqdm(train_dataloader)
-        for batch in train_dataloader:
+        for i, batch in enumerate(train_dataloader):
             batch = {k: torch.as_tensor(v).cuda() for k, v in batch.items()}
-            engine.zero_grad()
             output = engine(batch)
             batch = tensor_tree_map(lambda t: t[..., -1], batch)
             loss, loss_breakdown = engine.criterion(
                     output, batch, _return_breakdown=True)
-            if gpc.get_global_rank() == 0:
-                train_dataloader.set_postfix(loss=float(loss))
+            if (i+1) % args.log_interval == 0:
+                logger.info(f'Training, Epoch: {epoch}, Step: {i+1}, Global_Step: {epoch*args.train_epoch_len+i+1},' +
+                            f' Loss:{log_loss(loss_breakdown, batch, output)}', ranks=[0])
+            engine.zero_grad()
             engine.backward(loss)
             engine.step()
         lr_scheduler.step()
         
         if test_dataloader is not None:
             engine.eval()
-            if gpc.get_global_rank() == 0:
-                train_dataloader = tqdm(train_dataloader)
-            for batch in test_dataloader:
+            for i, batch in enumerate(test_dataloader):
                 batch = {k: torch.as_tensor(v).cuda() for k, v in batch.items()}
                 with torch.no_grad():
                     output = engine(batch)
                     batch = tensor_tree_map(lambda t: t[..., -1], batch)
+                    batch["use_clamped_fape"] = 0.
                     _, loss_breakdown = engine.criterion(
                             output, batch, _return_breakdown=True)
-                    if gpc.get_global_rank() == 0:
-                        train_dataloader.set_postfix(loss=float(loss))
+                    logger.info(f'Validation, Step: {i+1}, \
+                                Loss:{log_loss(loss_breakdown, batch, output, False)}', ranks=[0])
         
-
+        if (args.save_ckpt_path is not None) and ( (epoch+1) % args.save_ckpt_interval == 0):
+            torch.save(engine.model, os.path.join(args.save_ckpt_path, 'model.pth')) 
+        
 
 if __name__ == "__main__":
     main()
