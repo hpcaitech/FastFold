@@ -1612,6 +1612,7 @@ class AlphaFoldLoss(nn.Module):
                 out["sm"]["unnormalized_angles"],
                 **{**batch, **self.config.supervised_chi},
             ),
+            # Habana: TODO comment out below part to WA error in HMP
             "violation": lambda: violation_loss(
                 out["violation"],
                 **batch,

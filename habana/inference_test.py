@@ -22,8 +22,8 @@ def main():
 
     config = model_config(model_name)
     config.globals.inplace = False
-    config.globals.chunk_size = None
-    habana.enable_hmp()
+    config.globals.chunk_size = 512
+    # habana.enable_hmp()
     model = AlphaFold(config)
     model = inject_habana(model)
     model = model.eval()
@@ -47,6 +47,7 @@ def main():
             t = time.perf_counter()
             out = model(batch)
             htcore.mark_step()
+            htcore.hpu.default_stream().synchronize()
             print(f"Inference time: {time.perf_counter() - t}")
 
 

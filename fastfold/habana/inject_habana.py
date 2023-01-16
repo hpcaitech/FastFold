@@ -49,9 +49,7 @@ def copy_qkv_linear(model_fast, ori_q, ori_k, ori_v):
 
 
 def copy_attention(model_fast, model_ori):
-    copy_linear(model_fast.to_q, model_ori.linear_q)
-    copy_linear(model_fast.to_k, model_ori.linear_k)
-    copy_linear(model_fast.to_v, model_ori.linear_v)
+    copy_qkv_linear(model_fast.to_qkv, model_ori.linear_q, model_ori.linear_k, model_ori.linear_v)
     copy_linear(model_fast.gating_linear, model_ori.linear_g)
     copy_linear(model_fast.o_linear, model_ori.linear_o)
 

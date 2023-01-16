@@ -39,6 +39,7 @@ from fastfold.utils.tensor_utils import (
     flatten_final_dims,
 )
 
+import fastfold.habana as habana
 
 class AngleResnetBlock(nn.Module):
     def __init__(self, c_hidden):
@@ -397,10 +398,20 @@ class InvariantPointAttention(nn.Module):
             pt_att = sum([c**2 for c in pt_att])
         else:
             # [*, N_res, N_res, H, P_q, 3]
-            pt_att = q_pts.unsqueeze(-4) - k_pts.unsqueeze(-5)
-            pt_att = pt_att**2
-            # [*, N_res, N_res, H, P_q]
-            pt_att = sum(torch.unbind(pt_att, dim=-1))
+            ######################################
+            q_pts_t0 = q_pts.unsqueeze(-4)
+            q_shape = q_pts_t0.shape
+            q_pts_t0 = q_pts_t0.reshape([q_shape[0], q_shape[1], -1])
+            k_pts_t0 = k_pts.unsqueeze(-5)
+            k_shape = k_pts_t0.shape
+            k_pts_t0 = k_pts_t0.reshape([k_shape[0], k_shape[1], -1])
+            q_k = q_pts_t0 - k_pts_t0
+            q_k = q_k ** 2
+            q_k_shape = q_k.shape
+            pt_att = q_k.reshape(q_k_shape[:2] + q_shape[-3:])
+            #####################################
+            pt_att = pt_att.permute(0, 4, 1, 2, 3)
+            pt_att = torch.sum(pt_att, 1)
 
         head_weights = self.softplus(self.head_weights).view(
             *((1,) * len(pt_att.shape[:-2]) + (-1, 1))
@@ -408,7 +419,12 @@ class InvariantPointAttention(nn.Module):
         head_weights = head_weights * math.sqrt(
             1.0 / (3 * (self.no_qk_points * 9.0 / 2))
         )
-        pt_att = pt_att * head_weights
+        ##############################
+        pt_att_t0 = pt_att.permute(0, 3, 1, 2)
+        head_weights_t0 = head_weights.permute(0, 3, 1, 2)
+        pt_att_o = pt_att_t0 * head_weights_t0
+        pt_att = pt_att_o.permute(0, 2,3, 1)
+        ##############################
 
         # [*, N_res, N_res, H]
         pt_att = torch.sum(pt_att, dim=-1) * (-0.5)
@@ -448,13 +464,14 @@ class InvariantPointAttention(nn.Module):
             o_pt_norm = o_pt.norm(self.eps)
         else:
             # [*, H, 3, N_res, P_v]
-            o_pt = torch.sum(
-                (
-                    a[..., None, :, :, None]
-                    * permute_final_dims(v_pts, (1, 3, 0, 2))[..., None, :, :]
-                ),
-                dim=-2,
-            )
+            ###################################
+            a1 = a[..., None, :, :, None]
+            a1 = a1.permute(0, 1, 2, 4, 3)
+            b = permute_final_dims(v_pts, (1, 3, 0, 2))[..., None, :, :]
+            b = b.permute(0, 1, 2, 4, 3)
+            c = a1 * b
+            o_pt = torch.sum(c, -1)
+            ###################################
 
             # [*, N_res, H, P_v, 3]
             o_pt = permute_final_dims(o_pt, (2, 0, 3, 1))
@@ -787,6 +804,10 @@ class StructureModule(nn.Module):
 
             if i < (self.no_blocks - 1):
                 rigids = rigids.stop_rot_gradient()
+
+            if habana.is_habana():
+                import habana_frameworks.torch.core as htcore
+                htcore.mark_step()
 
         outputs = dict_multimap(torch.stack, outputs)
         outputs["single"] = s

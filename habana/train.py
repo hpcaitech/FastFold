@@ -22,6 +22,7 @@ logging.disable(logging.WARNING)
 
 torch.multiprocessing.set_sharing_strategy('file_system')
 
+from habana.hpuhelper import *
 
 def main():
     parser = argparse.ArgumentParser()
@@ -187,7 +188,9 @@ def main():
 
     criterion = AlphaFoldLoss(config.loss)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, eps=1e-8)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, eps=1e-8)
+    from habana_frameworks.torch.hpex.optimizers import FusedAdamW
+    optimizer = FusedAdamW(model.parameters(), lr=1e-3, eps=1e-8)
 
     lr_scheduler = AlphaFoldLRScheduler(optimizer)
 
@@ -202,20 +205,23 @@ def main():
         model.train()
         train_dataloader = tqdm(train_dataloader)
         for batch in train_dataloader:
+            perf = hpu_perf("train step")
             batch = {k: torch.as_tensor(v).to(device="hpu") for k, v in batch.items()}
             optimizer.zero_grad()
             output = model(batch)
+            perf.checknow("forward")
+            
             batch = tensor_tree_map(lambda t: t[..., -1], batch)
             loss, loss_breakdown = criterion(output, batch, _return_breakdown=True)
+            perf.checknow("loss")
 
             loss.backward()
-            htcore.mark_step()
             train_dataloader.set_postfix(loss=float(loss))
+            perf.checknow("backward")
 
             with hmp.disable_casts():
                 optimizer.step()
-
-            htcore.mark_step()
+            perf.checknow("optimizer")
 
         lr_scheduler.step()
 

@@ -9,6 +9,9 @@ from fastfold.habana.distributed import gather, scatter
 from .initializer import glorot_uniform_af
 from .kernel import bias_sigmod_ele
 
+from fastfold.habana.distributed import gather, scatter
+from fastfold.habana.fastnn.custom_op import fused_softmax, fused_softmax_bias
+
 CHUNK_SIZE = None
 DEBUG = False
 
@@ -103,9 +106,17 @@ class OutProductMean(nn.Module):
         for ax in range(0, para_dim, chunk_size):
             left_act_part = left_act[:, :, ax:ax + chunk_size, :]
 
-            O = torch.einsum('sid,sje->ijde', left_act_part.squeeze(0), right_act_all.squeeze(0))
+            # O = torch.einsum('sid,sje->ijde', left_act_part.squeeze(0), right_act_all.squeeze(0))
 
-            O = rearrange(O, 'i j d e -> i j (d e)')
+            # O = rearrange(O, 'i j d e -> i j (d e)')
+            left_shape = left_act_part.shape
+            right_shape = right_act_all.shape
+            left_act_part = left_act_part.reshape(left_shape[0], left_shape[1], left_shape[2]*left_shape[3])
+            right_act_all = right_act_all.reshape(right_shape[0], right_shape[1], right_shape[2]*right_shape[3])
+            # O = torch.einsum('...ab,...ad->...bd', left_act_part.squeeze(0), right_act_all.squeeze(0))
+            O = torch.matmul(left_act_part.squeeze(0).transpose(1, 0), right_act_all.squeeze(0))
+            O = O.reshape(left_shape[2], left_shape[3], right_shape[2], right_shape[3]).transpose(-2, -3)
+            O = O.reshape(O.shape[0], O.shape[1], O.shape[2]*O.shape[3])
 
             O = O.unsqueeze(0)
 
@@ -164,10 +175,10 @@ class SelfAttention(nn.Module):
 
         self.scaling = self.c**(-0.5)
 
-        # self.to_qkv = Linear(qkv_dim, 3 * n_head * c, initializer='linear')
-        self.to_q = Linear(qkv_dim, n_head * c, initializer='linear', use_bias=False)
-        self.to_k = Linear(qkv_dim, n_head * c, initializer='linear', use_bias=False)
-        self.to_v = Linear(qkv_dim, n_head * c, initializer='linear', use_bias=False)
+        self.to_qkv = Linear(qkv_dim, 3 * n_head * c, initializer='linear', use_bias=False)
+        # self.to_q = Linear(qkv_dim, n_head * c, initializer='linear', use_bias=False)
+        # self.to_k = Linear(qkv_dim, n_head * c, initializer='linear', use_bias=False)
+        # self.to_v = Linear(qkv_dim, n_head * c, initializer='linear', use_bias=False)
 
         if gating:
             self.gating_bias = nn.parameter.Parameter(data=torch.ones((n_head * c,)))
@@ -196,25 +207,31 @@ class SelfAttention(nn.Module):
             in_data_part = in_data[:, ax:ax + chunk_size, :, :]
             mask_part = mask[:, ax:ax + chunk_size, :]
 
-            # qkv = self.to_qkv(in_data).chunk(3, dim=-1)
-            # q, k, v = map(lambda t: rearrange(t, 'b1 b2 n (h d) -> b1 b2 h n d', h=self.n_head), qkv)
+            qkv = self.to_qkv(in_data_part).chunk(3, dim=-1)
+            q, k, v = map(lambda t: rearrange(t, 'b1 b2 n (h d) -> b1 b2 h n d', h=self.n_head), qkv)
 
-            q = self.to_q(in_data_part)
-            k = self.to_k(in_data_part)
-            v = self.to_v(in_data_part)
+            # q = self.to_q(in_data_part)
+            # k = self.to_k(in_data_part)
+            # v = self.to_v(in_data_part)
 
-            q, k, v = map(lambda t: rearrange(t, 'b1 b2 n (h d) -> b1 b2 h n d', h=self.n_head),
-                          [q, k, v])
+            # q, k, v = map(lambda t: rearrange(t, 'b1 b2 n (h d) -> b1 b2 h n d', h=self.n_head),
+            #               [q, k, v])
 
             q = q * self.scaling
 
             logits = torch.matmul(q, k.transpose(-1, -2))
 
-            logits += (1e9 * (mask_part - 1))[..., :, None, None, :]
+            # logits += (1e9 * (mask_part - 1))[..., :, None, None, :]
 
+            # if nonbatched_bias is not None:
+            #     logits += nonbatched_bias.unsqueeze(1)
+            # weights = torch.softmax(logits, dim=-1)
+
+            mask00 = (1e9 * (mask_part - 1))[..., :, None, None, :]
             if nonbatched_bias is not None:
-                logits += nonbatched_bias.unsqueeze(1)
-            weights = torch.softmax(logits, dim=-1)
+                weights = fused_softmax_bias(logits, mask00, nonbatched_bias.unsqueeze(1), -1)
+            else:
+                weights = fused_softmax(logits, mask00, -1)
 
             weighted_avg = torch.matmul(weights, v)
             weighted_avg = rearrange(weighted_avg, 'b1 b2 h n d -> b1 b2 n (h d)')

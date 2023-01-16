@@ -51,13 +51,13 @@ class TriangleMultiplicationOutgoing(nn.Module):
         right_proj_act = gather(right_proj_act.contiguous(), dim=1)
 
         g = torch.sigmoid(self.output_gate(Z))
-        # p = torch.matmul(
-        #     permute_final_dims(left_proj_act, (2, 0, 1)),
-        #     permute_final_dims(right_proj_act, (2, 1, 0)),
-        # )
-        # ab = permute_final_dims(p, (1, 2, 0))
+        p = torch.matmul(
+            permute_final_dims(left_proj_act, (2, 0, 1)),
+            permute_final_dims(right_proj_act, (2, 1, 0)),
+        )
+        ab = permute_final_dims(p, (1, 2, 0))
 
-        ab = torch.einsum('bikd,bjkd->bijd', left_proj_act, right_proj_act)
+        # ab = torch.einsum('bikd,bjkd->bijd', left_proj_act, right_proj_act)
         ab = self.output_projection(self.layernorm2(ab))
         dropout_mask = torch.ones_like(Z[:, 0:1, :, :], device=Z.device, dtype=Z.dtype)
         return bias_ele_dropout_residual(ab,
@@ -102,13 +102,13 @@ class TriangleMultiplicationIncoming(nn.Module):
         left_proj_act = gather(left_proj_act.contiguous(), dim=2)
 
         g = torch.sigmoid(self.output_gate(Z))
-        # p = torch.matmul(
-        #     permute_final_dims(left_proj_act, (2, 1, 0)),
-        #     permute_final_dims(right_proj_act, (2, 0, 1)),
-        # )
-        # ab = permute_final_dims(p, (1, 2, 0))
+        p = torch.matmul(
+            permute_final_dims(left_proj_act, (2, 1, 0)),
+            permute_final_dims(right_proj_act, (2, 0, 1)),
+        )
+        ab = permute_final_dims(p, (1, 2, 0))
 
-        ab = torch.einsum('bkid,bkjd->bijd', left_proj_act, right_proj_act)
+        # ab = torch.einsum('bkid,bkjd->bijd', left_proj_act, right_proj_act)
         ab = self.output_projection(self.layernorm2(ab))
         dropout_mask = torch.ones_like(Z[:, 0:1, :, :], device=Z.device, dtype=Z.dtype)
         return bias_ele_dropout_residual(ab,
