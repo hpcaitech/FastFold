@@ -188,7 +188,9 @@ def main():
 
     criterion = AlphaFoldLoss(config.loss)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, eps=1e-8)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, eps=1e-8)
+    from habana_frameworks.torch.hpex.optimizers import FusedAdamW
+    optimizer = FusedAdamW(model.parameters(), lr=1e-3, eps=1e-8)
 
     lr_scheduler = AlphaFoldLRScheduler(optimizer)
 

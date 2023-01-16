@@ -41,7 +41,7 @@ from fastfold.utils.tensor_utils import (
     tensor_tree_map,
 )
 
-from habana.hpuhelper import *
+import fastfold.habana as habana
 
 class AlphaFold(nn.Module):
     """
@@ -174,7 +174,9 @@ class AlphaFold(nn.Module):
         # Primary output dictionary
         outputs = {}
 
-        perf = hpu_perf("iteration", sync=False)
+        if habana.is_habana():
+            from habana.hpuhelper import hpu_perf
+            perf = hpu_perf("iteration", sync=False)
         dtype = next(self.parameters()).dtype
         for k in feats:
             if(feats[k].dtype == torch.float32):
@@ -192,7 +194,8 @@ class AlphaFold(nn.Module):
         pair_mask = seq_mask[..., None] * seq_mask[..., None, :]
         msa_mask = feats["msa_mask"]
 
-        perf.checkahead("1: Initialize the MSA and pair representations")
+        if habana.is_habana():
+            perf.checkahead("1: Initialize the MSA and pair representations")
 
         # m: [*, S_c, N, C_m]
         # z: [*, N, N, C_z]
@@ -254,7 +257,8 @@ class AlphaFold(nn.Module):
         # Possibly prevents memory fragmentation
         del m_1_prev, z_prev, x_prev
 
-        perf.checkahead("2: Embed the templates + merge with MSA/pair embeddings")
+        if habana.is_habana():
+            perf.checkahead("2: Embed the templates + merge with MSA/pair embeddings")
         if self.config.template.enabled:
             template_feats = {
                 k: v for k, v in feats.items() if k.startswith("template_")
@@ -322,7 +326,8 @@ class AlphaFold(nn.Module):
                     )
             del template_feats, template_embeds
 
-        perf.checkahead("3: Embed extra MSA features + merge with pairwise embeddings")
+        if habana.is_habana():
+            perf.checkahead("3: Embed extra MSA features + merge with pairwise embeddings")
         if self.config.extra_msa.enabled:
             if(self.globals.is_multimer):
                 extra_msa_fn = data_transforms_multimer.build_extra_msa_feat
@@ -356,7 +361,8 @@ class AlphaFold(nn.Module):
                 )[0]
             del extra_msa_feat, extra_msa_fn
 
-        perf.checkahead("4: Run MSA + pair embeddings through the trunk of the network")
+        if habana.is_habana():
+            perf.checkahead("4: Run MSA + pair embeddings through the trunk of the network")
         # m: [*, S, N, C_m]
         # z: [*, N, N, C_z]
         # s: [*, N, C_s]
@@ -387,7 +393,8 @@ class AlphaFold(nn.Module):
         outputs["pair"] = z
         outputs["single"] = s
 
-        perf.checkahead("5: Predict 3D structure")
+        if habana.is_habana():
+            perf.checkahead("5: Predict 3D structure")
         outputs["sm"] = self.structure_module(
             s,
             z,
@@ -411,7 +418,8 @@ class AlphaFold(nn.Module):
         # [*, N, 3]
         x_prev = outputs["final_atom_positions"]
 
-        perf.checkahead("6: stop iteration")
+        if habana.is_habana():
+            perf.checkahead("6: stop iteration")
 
         return outputs, m_1_prev, z_prev, x_prev
 
@@ -494,7 +502,9 @@ class AlphaFold(nn.Module):
         # Main recycling loop
         num_iters = batch["aatype"].shape[-1]
         for cycle_no in range(num_iters):
-            perf = hpu_perf(f"cycle {cycle_no+1}/{num_iters}")
+            if habana.is_habana():
+                from habana.hpuhelper import hpu_perf
+                perf = hpu_perf(f"cycle {cycle_no+1}/{num_iters}")
             # Select the features for the current recycling cycle
             fetch_cur_batch = lambda t: t[..., cycle_no]
             feats = tensor_tree_map(fetch_cur_batch, batch)
@@ -516,7 +526,8 @@ class AlphaFold(nn.Module):
                     x_prev,
                     _recycle=(num_iters > 1)
                 )
-            perf.checknow("cycle finish")
+            if habana.is_habana():
+                perf.checknow("cycle finish")
         # Run auxiliary heads
         outputs.update(self.aux_heads(outputs))
 

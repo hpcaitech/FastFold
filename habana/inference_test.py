@@ -22,7 +22,7 @@ def main():
 
     config = model_config(model_name)
     config.globals.inplace = False
-    config.globals.chunk_size = None
+    config.globals.chunk_size = 512
     # habana.enable_hmp()
     model = AlphaFold(config)
     model = inject_habana(model)
