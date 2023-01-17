@@ -7,9 +7,9 @@
 python inference.py target.fasta data/pdb_mmcif/mmcif_files \
     --output_dir ./ \
     --uniref90_database_path data/uniref90/uniref90.fasta \
-    --mgnify_database_path data/mgnify/mgy_clusters_2018_12.fa \
+    --mgnify_database_path data/mgnify/mgy_clusters_2022_05.fa \
     --pdb70_database_path data/pdb70/pdb70 \
-    --uniclust30_database_path data/uniclust30/uniclust30_2018_08/uniclust30_2018_08 \
+    --uniref30_database_path data/uniref30/UniRef30_2021_03 \
     --bfd_database_path data/bfd/bfd_metaclust_clu_complete_id30_c90_final_seq.sorted_opt \
     --jackhmmer_binary_path `which jackhmmer` \
     --hhblits_binary_path `which hhblits` \
