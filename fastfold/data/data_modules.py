@@ -21,7 +21,7 @@ from typing import Optional, Sequence, List, Any
 
 import ml_collections as mlc
 import torch
-
+from colossalai.utils import is_using_ddp
 from fastfold.data import (
     data_pipeline,
     feature_pipeline,
@@ -384,8 +384,8 @@ class OpenFoldBatchCollator:
 
 
 class OpenFoldDataLoader(torch.utils.data.DataLoader):
-    def __init__(self, *args, config, stage="train", generator=None, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, dataset, config, stage="train", generator=None, **kwargs):
+        super().__init__(dataset, **kwargs)
         self.config = config
         self.stage = stage    
 
@@ -604,28 +604,36 @@ def TrainDataLoader(
         generator = generator.manual_seed(batch_seed)
 
     train_batch_collator = OpenFoldBatchCollator(config, "train")
+    train_sampler = None
+    if is_using_ddp():
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     train_dataset.reroll()
     train_dataloader = OpenFoldDataLoader(
-        train_dataset,
+        dataset=train_dataset,
         config=config,
         stage="train",
         generator=generator,
         batch_size=config.data_module.data_loaders.batch_size,
         num_workers=config.data_module.data_loaders.num_workers,
         collate_fn=train_batch_collator,
+        sampler=train_sampler,
     )
 
     test_dataloader = None
     if test_dataset is not None:
+        test_sampler = None
+        if is_using_ddp():
+            test_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
         test_batch_collator = OpenFoldBatchCollator(config, "test")
         test_dataloader = OpenFoldDataLoader(
-            train_dataset,
+            dataset=test_dataset,
             config=config,
             stage="test",
             generator=generator,
             batch_size=config.data_module.data_loaders.batch_size,
             num_workers=config.data_module.data_loaders.num_workers,
             collate_fn=test_batch_collator,
+            sampler=test_sampler,
         )
 
     return train_dataloader, test_dataloader
