@@ -1,7 +1,7 @@
-DATA_DIR=/path/to/data
+DATA_DIR=/home1/08694/hpccsg/FastFold/train_data/
 PROJECT_DIR=/path/to/project
 
-gpus_per_node=2
+gpus_per_node=3
 nnodes=1
 
 max_template_date=2021-10-10

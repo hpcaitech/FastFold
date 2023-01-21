@@ -373,7 +373,7 @@ config = mlc.ConfigDict(
                     "transition_n": 4,
                     "msa_dropout": 0.15,
                     "pair_dropout": 0.25,
-                    "clear_cache_between_blocks": True,
+                    "clear_cache_between_blocks": False,
                     "inf": 1e9,
                     "eps": eps,  # 1e-10,
                     "ckpt": blocks_per_ckpt is not None,

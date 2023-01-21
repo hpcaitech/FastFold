@@ -4,7 +4,7 @@ import logging
 import torch
 from torch.nn.parameter import Parameter
 
-_triton_available = True
+_triton_available = False
 if _triton_available:
     try:
         from .triton.layer_norm import LayerNormTritonFunc

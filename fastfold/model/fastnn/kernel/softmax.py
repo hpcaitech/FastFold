@@ -4,7 +4,7 @@ import logging
 
 import torch
 
-_triton_available = True
+_triton_available = False
 if _triton_available:
     try:
         from .triton.softmax import softmax_triton_kernel_wrapper

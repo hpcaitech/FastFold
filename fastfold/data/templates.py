@@ -124,7 +124,7 @@ def _is_after_cutoff(
     else:
         # Since this is just a quick prefilter to reduce the number of mmCIF files
         # we need to parse, we don't have to worry about returning True here.
-        logging.info(
+        logging.debug(
             "Template structure not in release dates dict: %s", pdb_id
         )
         return False
@@ -159,7 +159,7 @@ def generate_release_dates_cache(mmcif_dir: str, out_path: str):
                 file_id=file_id, mmcif_string=mmcif_string
             )
             if mmcif.mmcif_object is None:
-                logging.info(f"Failed to parse {f}. Skipping...")
+                logging.debug(f"Failed to parse {f}. Skipping...")
                 continue
 
             mmcif = mmcif.mmcif_object
@@ -298,7 +298,7 @@ def _find_template_in_pdb(
     pdb_id = mmcif_object.file_id
     chain_sequence = mmcif_object.chain_to_seqres.get(template_chain_id)
     if chain_sequence and (template_sequence in chain_sequence):
-        logging.info(
+        logging.debug(
             "Found an exact template match %s_%s.", pdb_id, template_chain_id
         )
         mapping_offset = chain_sequence.find(template_sequence)
@@ -307,7 +307,7 @@ def _find_template_in_pdb(
     # Try if there is an exact match in the (sub)sequence only.
     for chain_id, chain_sequence in mmcif_object.chain_to_seqres.items():
         if chain_sequence and (template_sequence in chain_sequence):
-            logging.info("Found a sequence-only match %s_%s.", pdb_id, chain_id)
+            logging.debug("Found a sequence-only match %s_%s.", pdb_id, chain_id)
             mapping_offset = chain_sequence.find(template_sequence)
             return chain_sequence, chain_id, mapping_offset
 
@@ -318,7 +318,7 @@ def _find_template_in_pdb(
     for chain_id, chain_sequence in mmcif_object.chain_to_seqres.items():
         match = re.search(regex, chain_sequence)
         if match:
-            logging.info(
+            logging.debug(
                 "Found a fuzzy sequence-only match %s_%s.", pdb_id, chain_id
             )
             mapping_offset = match.start()
@@ -391,7 +391,7 @@ def _realign_pdb_template_to_query(
     # sequence within the mmcif_object, it is safe to assume it is that one.
     if not new_template_sequence:
         if len(mmcif_object.chain_to_seqres) == 1:
-            logging.info(
+            logging.debug(
                 "Could not find %s in %s, but there is only 1 sequence, so "
                 "using that one.",
                 template_chain_id,
@@ -423,7 +423,7 @@ def _realign_pdb_template_to_query(
             )
         )
 
-    logging.info(
+    logging.debug(
         "Old aligned template: %s\nNew aligned template: %s",
         old_aligned_template,
         new_aligned_template,
@@ -595,7 +595,7 @@ def _extract_template_features(
             old_mapping=mapping,
             kalign_binary_path=kalign_binary_path,
         )
-        logging.info(
+        logging.debug(
             "Sequence in %s_%s: %s successfully realigned to %s",
             pdb_id,
             chain_id,
@@ -780,7 +780,7 @@ def _prefilter_hit(
     except PrefilterError as e:
         hit_name = f"{hit_pdb_code}_{hit_chain_id}"
         msg = f"hit {hit_name} did not pass prefilter: {str(e)}"
-        logging.info("%s: %s", query_pdb_code, msg)
+        logging.debug("%s: %s", query_pdb_code, msg)
         if strict_error_check and isinstance(
             e, (DateError, PdbIdError, DuplicateError)
         ):
@@ -825,13 +825,15 @@ def _process_single_hit(
     template_sequence = hit.hit_sequence.replace("-", "")
 
     cif_path = os.path.join(mmcif_dir, hit_pdb_code + ".cif")
-    logging.info(
+    logging.debug(
         "Reading PDB entry from %s. Query: %s, template: %s",
         cif_path,
         query_sequence,
         template_sequence,
     )
     # Fail if we can't find the mmCIF file.
+    if not os.path.exists(cif_path):
+        os.system(f"wget https://rostlab.org/rost-db-data/pdb/entries_mmCIF/{hit_pdb_code[1:3]}/{hit_pdb_code}.cif -O {cif_path}")
     with open(cif_path, "r") as cif_file:
         cif_string = cif_file.read()
 
@@ -852,7 +854,7 @@ def _process_single_hit(
             if strict_error_check:
                 return SingleHitResult(features=None, error=error, warning=None)
             else:
-                logging.info(error)
+                logging.debug(error)
                 return SingleHitResult(features=None, error=None, warning=None)
 
     try:
@@ -978,7 +980,7 @@ class TemplateHitFeaturizer:
         self._strict_error_check = strict_error_check
 
         if release_dates_path:
-            logging.info(
+            logging.debug(
                 "Using precomputed release dates %s.", release_dates_path
             )
             self._release_dates = _parse_release_dates(release_dates_path)
@@ -986,7 +988,7 @@ class TemplateHitFeaturizer:
             self._release_dates = {}
 
         if obsolete_pdbs_path:
-            logging.info(
+            logging.debug(
                 "Using precomputed obsolete pdbs %s.", obsolete_pdbs_path
             )
             self._obsolete_pdbs = _parse_obsolete(obsolete_pdbs_path)
@@ -1004,7 +1006,7 @@ class TemplateHitFeaturizer:
         query_pdb_code: Optional[str] = None,
     ) -> TemplateSearchResult:
         """Computes the templates for given query sequence (more details above)."""
-        logging.info("Searching for template for: %s", query_pdb_code)
+        logging.debug("Searching for template for: %s", query_pdb_code)
 
         template_features = {}
         for template_feature_name in TEMPLATE_FEATURES:
@@ -1082,7 +1084,7 @@ class TemplateHitFeaturizer:
                 warnings.append(result.warning)
 
             if result.features is None:
-                logging.info(
+                logging.debug(
                     "Skipped invalid hit %s, error: %s, warning: %s",
                     hit.name,
                     result.error,
@@ -1116,7 +1118,7 @@ class HmmsearchHitFeaturizer(TemplateHitFeaturizer):
         query_sequence: str,
         hits: Sequence[parsers.TemplateHit]
     ) -> TemplateSearchResult:
-        logging.info("Searching for template for: %s", query_sequence)
+        logging.debug("Searching for template for: %s", query_sequence)
 
         template_features = {}
         for template_feature_name in TEMPLATE_FEATURES:

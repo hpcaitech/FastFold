@@ -197,12 +197,12 @@ def main():
         train_dataset=train_dataset,
         test_dataset=test_dataset,
         batch_seed=args.seed,
-        )
+    )
 
 
     criterion = AlphaFoldLoss(config.loss)
 
-    optimizer = HybridAdam(model.parameters(), lr=1e-3, eps=1e-8)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, eps=1e-6)
 
     lr_scheduler = AlphaFoldLRScheduler(optimizer)
     
