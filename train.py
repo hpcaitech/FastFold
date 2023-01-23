@@ -36,7 +36,7 @@ def log_loss(args, loss_breakdown, batch, outputs, global_step, train=True):
             superimposition_metrics=(not train)
         )
     for loss_name, loss_value in other_metrics.items():
-        if args.wandb and dist.get_rank() == 0:
+        if args.wandb and dist.get_rank() == 0: 
             wandb.log({mode + loss_name: loss_value}, step=global_step)
         loss_info += (f' {loss_name}=' + "{:.3f}".format(loss_value))
     return loss_info
