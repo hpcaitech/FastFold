@@ -22,12 +22,12 @@ import torch.multiprocessing
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 
-def log_loss(loss_breakdown, batch, outputs, train=True):
+def log_loss(args, loss_breakdown, batch, outputs, global_step, train=True):
     loss_info = ''
     mode = "train/" if train else "val/"
     for loss_name, loss_value in loss_breakdown.items():
-        if dist.get_rank() == 0:
-            wandb.log({mode + loss_name: loss_value})
+        if args.wandb and dist.get_rank() == 0:
+            wandb.log({mode + loss_name: loss_value}, step=global_step)
         loss_info += (f' {loss_name}=' + "{:.3f}".format(loss_value))
     with torch.no_grad():
         other_metrics = compute_validation_metrics(
@@ -36,8 +36,8 @@ def log_loss(loss_breakdown, batch, outputs, train=True):
             superimposition_metrics=(not train)
         )
     for loss_name, loss_value in other_metrics.items():
-        if dist.get_rank() == 0:
-            wandb.log({mode + loss_name: loss_value})
+        if args.wandb and dist.get_rank() == 0: 
+            wandb.log({mode + loss_name: loss_value}, step=global_step)
         loss_info += (f' {loss_name}=' + "{:.3f}".format(loss_value))
     return loss_info
 
@@ -176,7 +176,7 @@ def main():
     config = model_config(args.config_preset, train=True)
     config.globals.inplace = False
     if args.wandb and dist.get_rank() == 0:
-        wandb.init(config=config, project="fastfold")
+        wandb.init(config=config, project="fastfold", entity="fastfold")
     model = AlphaFold(config)
     model = inject_fastnn(model)
 
@@ -238,7 +238,7 @@ def main():
                     output, batch, _return_breakdown=True)
             if (i+1) % args.log_interval == 0:
                 logger.info(f'Training, Epoch: {epoch}, Step: {i+1}, Global_Step: {epoch*args.train_epoch_len+i+1},' +
-                            f' Loss:{log_loss(loss_breakdown, batch, output)}', ranks=[0])
+                            f' Loss:{log_loss(args, loss_breakdown, batch, output, epoch*args.train_epoch_len+i+1)}', ranks=[0])
             engine.zero_grad()
             engine.backward(loss)
             engine.step()
@@ -255,7 +255,7 @@ def main():
                     _, loss_breakdown = engine.criterion(
                             output, batch, _return_breakdown=True)
                     logger.info(f'Validation, Step: {i+1}, \
-                                Loss:{log_loss(loss_breakdown, batch, output, False)}', ranks=[0])
+                                Loss:{log_loss(args, loss_breakdown, batch, output, epoch*args.train_epoch_len+i+1, False)}', ranks=[0])
         
         if (args.save_ckpt_path is not None) and ( (epoch+1) % args.save_ckpt_interval == 0):
             torch.save(engine.model, os.path.join(args.save_ckpt_path, 'model.pth')) 
