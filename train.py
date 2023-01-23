@@ -1,6 +1,8 @@
 import os
 import random
+import wandb
 import torch
+import torch.distributed as dist
 import numpy as np
 import colossalai
 from colossalai.logging import disable_existing_loggers, get_dist_logger
@@ -22,7 +24,10 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 
 def log_loss(loss_breakdown, batch, outputs, train=True):
     loss_info = ''
+    mode = "train/" if train else "val/"
     for loss_name, loss_value in loss_breakdown.items():
+        if dist.get_rank() == 0:
+            wandb.log({mode + loss_name: loss_value})
         loss_info += (f' {loss_name}=' + "{:.3f}".format(loss_value))
     with torch.no_grad():
         other_metrics = compute_validation_metrics(
@@ -31,6 +36,8 @@ def log_loss(loss_breakdown, batch, outputs, train=True):
             superimposition_metrics=(not train)
         )
     for loss_name, loss_value in other_metrics.items():
+        if dist.get_rank() == 0:
+            wandb.log({mode + loss_name: loss_value})
         loss_info += (f' {loss_name}=' + "{:.3f}".format(loss_value))
     return loss_info
 
@@ -153,6 +160,7 @@ def main():
         "--save_ckpt_interval", type=int, default=1,
         help="The interval epochs of save checkpoint"
     )
+    parser.add_argument('--wandb', default=False, action='store_true')
 
     args = parser.parse_args()
     random.seed(args.seed)
@@ -167,6 +175,8 @@ def main():
 
     config = model_config(args.config_preset, train=True)
     config.globals.inplace = False
+    if args.wandb and dist.get_rank() == 0:
+        wandb.init(config=config, project="fastfold")
     model = AlphaFold(config)
     model = inject_fastnn(model)
 
