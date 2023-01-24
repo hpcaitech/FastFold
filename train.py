@@ -157,12 +157,16 @@ def main():
         help="The path of log folder"
     )
     parser.add_argument(
-        "--save_ckpt_path", type=str, default=None,
+        "--save_ckpt_path", type=str, default="./ckpt",
         help="The path where to save checkpoint, None means not save"
     )
     parser.add_argument(
         "--save_ckpt_interval", type=int, default=1,
         help="The interval epochs of save checkpoint"
+    )
+    parser.add_argument(
+        "--resume_ckpt_path", type=str, default=None,
+        help="The path where to load checkpoint, None means not load"
     )
     parser.add_argument('--wandb', default=False, action='store_true')
 
@@ -220,6 +224,7 @@ def main():
 
     lr_ = 1e-5 * gpc.get_world_size(colossalai.context.parallel_mode.ParallelMode.GLOBAL)
 
+    # optimizer = torch.optim.Adam(model.parameters(), lr=lr_, eps=1e-6) 
     optimizer = create_lamb_optimizer(model=model, lr=lr_)
     lr_scheduler = AlphaFoldLRScheduler(optimizer, max_lr=lr_)
 
@@ -236,10 +241,18 @@ def main():
         writer = SummaryWriter()
 
     traindata_len = len(train_dataloader)
-    
+
+    start_epoch = 0
+    if args.resume_ckpt_path and os.path.isfile(args.resume_ckpt_path):
+        logger.info(f'=> loading checkpoint. {args.resume_ckpt_path}')
+        checkpoint = torch.load(args.resume_ckpt_path)
+        start_epoch = checkpoint['epoch']
+        engine.model.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
 
     logger.info('Start training.', ranks=[0])
-    for epoch in range(args.max_epochs):
+    for epoch in range(start_epoch, args.max_epochs):
         engine.train()
         for idx, batch in enumerate(train_dataloader):
             batch = {k: torch.as_tensor(v).cuda() for k, v in batch.items()}
@@ -248,8 +261,9 @@ def main():
             loss, loss_breakdown = engine.criterion(
                     output, batch, _return_breakdown=True)
             if (idx+1) % args.log_interval == 0:
-                logger.info(f'Training, Epoch: {epoch}, Step: {idx+1}, Global_Step: {epoch*args.train_epoch_len+idx+1},' +
-                            f' Loss:{log_loss(args, loss_breakdown, batch, output, epoch*args.train_epoch_len+idx+1)}', ranks=[0])
+                logger.info(f'Training, Epoch: {epoch}, Step: {idx+1}, Global_Step: {epoch*traindata_len+idx+1},' +
+                            f' Loss:{log_loss(args, loss_breakdown, batch, output, epoch*traindata_len+idx+1)}', ranks=[0])
+                logger.info(f'Learning rate: {lr_scheduler.get_last_lr()}', ranks=[0])
             engine.zero_grad()
             engine.backward(loss)
             engine.step()
@@ -270,9 +284,18 @@ def main():
                             output, batch, _return_breakdown=True)
                     logger.info(f'Validation, Step: {i+1}, \
                                 Loss:{log_loss(args, loss_breakdown, batch, output, epoch*args.train_epoch_len+i+1, False)}', ranks=[0])
-        
-        if (args.save_ckpt_path is not None) and ( (epoch+1) % args.save_ckpt_interval == 0):
-            torch.save(engine.model, os.path.join(args.save_ckpt_path, 'model.pth')) 
+
+        if (args.save_ckpt_path is not None) and ( (epoch+1) % args.save_ckpt_interval == 0) and gpc.get_global_rank() == 0:
+            checkpoint = {
+                'epoch': epoch,
+                'model': engine.model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'lr_scheduler': lr_scheduler.state_dict()
+            }
+            ckpt_path = os.path.join(args.save_ckpt_path, f'model.{epoch}.pth')
+            logger.info(f"=> save ckpt. {ckpt_path}")
+            os.makedirs(args.save_ckpt_path, exist_ok=True)
+            torch.save(checkpoint, ckpt_path)
         
 
 if __name__ == "__main__":
