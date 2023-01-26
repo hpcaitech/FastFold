@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import math
+from functools import partial
 from typing import Optional, Tuple
 
 import torch
@@ -29,6 +30,7 @@ from fastfold.distributed.comm import gather, scatter, row_to_col, scatter
 from fastfold.distributed.comm_async import gather_async, All_to_All_Async, All_to_All_Async_Opp
 from fastfold.model.fastnn.triangle import PairCore
 
+from fastfold.utils.checkpointing import get_checkpoint_fn
 
 class MSARowAttentionWithPairBias(nn.Module):
 
@@ -392,28 +394,23 @@ class ExtraMSAStack(nn.Module):
         Returns:
             [*, N_res, N_res, C_z] pair update
         """ 
-        #checkpoint_fn = get_checkpoint_fn()
-        #blocks = [
-        #    partial(b, msa_mask=msa_mask, pair_mask=pair_mask, chunk_size=chunk_size, _chunk_logits=None) for b in self.blocks
-        #]
+        checkpoint_fn = get_checkpoint_fn()
+        blocks = [
+            partial(b, msa_mask=msa_mask, pair_mask=pair_mask, chunk_size=chunk_size) for b in self.blocks
+        ]
 
-        #def dodo(b, *args):
-        #    torch.cuda.empty_cache()
-        #    return b(*args)
-
-        #blocks = [partial(dodo, b) for b in blocks]
-
-        #for b in blocks:
-        #    if(torch.is_grad_enabled()):
-        #        m, z = checkpoint_fn(b, *(m, z))
-        #    else:
-        #        m, z = b(m, z)
-
-        for b in self.blocks:
-            m, z = b(m, z, msa_mask, pair_mask, chunk_size=chunk_size)
-
-            if(self.clear_cache_between_blocks):
+        if(self.clear_cache_between_blocks):
+            def dodo(b, *args):
                 torch.cuda.empty_cache()
+                return b(*args)
+
+            blocks = [partial(dodo, b) for b in blocks]
+
+        for b in blocks:
+            if(torch.is_grad_enabled()):
+                m, z = checkpoint_fn(b, *(m, z))
+            else:
+                m, z = b(m, z)
 
         return z
 

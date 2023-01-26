@@ -178,7 +178,7 @@ def main():
     logger = get_dist_logger()
     logger.log_to_file(args.log_path)
 
-    args.seed += gpc.get_global_rank()
+    # args.seed += gpc.get_global_rank()
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
