@@ -48,6 +48,7 @@ def get_openfold_state():
     return of_params, of_grads
 
 
+@pytest.mark.skipif(torch.cuda.mem_get_info(0)[1] < 4e10, reason="Not enough cuda memory")
 @pytest.mark.parametrize('world_size', [1])
 def test_state_dict(world_size, get_openfold_state):
     run_func = partial(run_dist, world_size=world_size, model=get_openfold_state)
