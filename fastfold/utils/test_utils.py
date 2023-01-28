@@ -20,6 +20,9 @@ def get_data_path():
     return '/data/scratch/fastfold/mono_batch.pkl'
 
 
+def get_train_data_path():
+    return '/data/scratch/fastfold/std_train_batch.pkl'
+
 def set_seed(seed):
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)

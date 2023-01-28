@@ -9,7 +9,7 @@ from fastfold.model.hub import AlphaFold
 from fastfold.config import model_config
 from fastfold.model.fastnn import set_chunk_size
 from fastfold.utils.inject_fastnn import inject_fastnn
-from fastfold.utils.test_utils import get_data_path
+from fastfold.utils.test_utils import get_train_data_path
 from fastfold.model.hub.loss import AlphaFoldLoss
 from fastfold.utils.tensor_utils import tensor_tree_map
 from fastfold.utils.test_utils import set_seed
@@ -34,7 +34,7 @@ def get_openfold_state():
     model.train().cuda()
     criterion = AlphaFoldLoss(config.loss)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, eps=1e-8)
-    batch = pickle.load(open('../std_train_batch.pkl', 'rb'))
+    batch = pickle.load(open(get_train_data_path(), 'rb'))
     set_seed(42)
     batch = {k: torch.as_tensor(v).cuda() for k, v in batch.items()}
     out = model(batch)
@@ -75,7 +75,7 @@ def train(world_size, get_openfold_state):
     criterion = AlphaFoldLoss(config.loss)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, eps=1e-8)
     set_chunk_size(None) 
-    batch = pickle.load(open('../std_train_batch.pkl', 'rb'))
+    batch = pickle.load(open(get_train_data_path(), 'rb'))
     batch = {k: torch.as_tensor(v).cuda() for k, v in batch.items()}
     set_seed(42)
     out = model(batch)
