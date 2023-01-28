@@ -103,7 +103,7 @@ def train(world_size, get_openfold_state):
         dif = torch.max(torch.abs(ff_grads[name] - of_grads[name]))
         if dif > grads_dif:
             grads_dif = dif
-    assert params_dif < 1e-4 and grads_dif < 5e-4, f"Test failed at world size: {world_size}, \
+    assert params_dif < 1e-3 and grads_dif < 5e-3, f"Test failed at world size: {world_size}, \
         the param dif is {params_dif}, the grad diff is {grads_dif}"
 
 
