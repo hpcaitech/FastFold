@@ -215,6 +215,7 @@ To run AlphaFold inference or training on Intel Habana, you can follow the instr
 Once you have prepared your dataset and installed fastfold, you can use the following scripts:
 
 ```shell
+cd fastfold/habana/fastnn/custom_op/; python setup.py build (this is for Gaudi, for Gaudi2 please use setup2.py) ; cd -
 bash habana/inference.sh
 bash habana/train.sh
 ```
