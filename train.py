@@ -4,7 +4,6 @@ import torch
 import numpy as np
 import colossalai
 from colossalai.logging import disable_existing_loggers, get_dist_logger
-from colossalai.core import global_context as gpc
 from colossalai.nn.optimizer import HybridAdam
 
 from fastfold.config import model_config
@@ -13,7 +12,6 @@ from fastfold.utils.inject_fastnn import inject_fastnn
 from fastfold.data.data_modules import SetupTrainDataset, TrainDataLoader
 from fastfold.utils.tensor_utils import tensor_tree_map
 from fastfold.utils.validation_utils import compute_validation_metrics
-
 #import logging
 #logging.disable(logging.WARNING)
 import torch.multiprocessing
@@ -153,6 +151,10 @@ def main():
         "--save_ckpt_interval", type=int, default=1,
         help="The interval epochs of save checkpoint"
     )
+    parser.add_argument(
+        "--dap_size", type=int, default=1,
+        help="DAP size, recommended as 1 - nproc_per_node"
+    )
 
     args = parser.parse_args()
     random.seed(args.seed)
@@ -160,7 +162,8 @@ def main():
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
     if args.from_torch:
-        colossalai.launch_from_torch(config=dict(torch_ddp=dict(static_graph=True)))
+        colossalai.launch_from_torch(config=dict(parallel=dict(tensor=dict(size=args.dap_size)), 
+                                                torch_ddp=dict(static_graph=True)))
     disable_existing_loggers()
     logger = get_dist_logger()
     logger.log_to_file(args.log_path)
@@ -227,7 +230,7 @@ def main():
             loss, loss_breakdown = engine.criterion(
                     output, batch, _return_breakdown=True)
             if (i+1) % args.log_interval == 0:
-                logger.info(f'Training, Epoch: {epoch}, Step: {i+1}, Global_Step: {epoch*args.train_epoch_len+i+1},' +
+                logger.info(f'Training, Epoch: {epoch}, Step: {i+1}, Global_Step: {epoch*len(train_dataloader)+i+1},' +
                             f' Loss:{log_loss(loss_breakdown, batch, output)}', ranks=[0])
             engine.zero_grad()
             engine.backward(loss)
