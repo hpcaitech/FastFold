@@ -18,7 +18,7 @@ from typing import Tuple, Any, Sequence, Callable, Optional
 
 import numpy as np
 import torch
-
+import fastfold.habana as habana
 
 def rot_matmul(
     a: torch.Tensor, 
@@ -34,6 +34,19 @@ def rot_matmul(
         Returns:
             The product ab
     """
+    if habana.is_habana():
+        if len(a.shape) == 4 and a.shape[1] == 1:
+            aa = a.permute(0, 1, 3, 2)
+            bb = b.permute(0, 1, 3, 2)
+            cc = bb @ aa
+            cc = cc.permute(0, 1, 3, 2)
+            return cc
+        elif len(a.shape) == 4 and a.shape[1] != 1:
+            pass
+        else:
+            cc = a @ b
+            return cc
+
     row_1 = torch.stack(
         [
             a[..., 0, 0] * b[..., 0, 0]
@@ -94,6 +107,20 @@ def rot_vec_mul(
         Returns:
             [*, 3] rotated coordinates
     """
+    if habana.is_habana():
+        cont = True
+        if len(t.shape) == 4 and t.shape[1] == 1:
+            cont = False
+        elif len(t.shape) == 3 and t.shape[0] != r.shape[0] and t.shape[0] == 1:
+            cont = False
+
+        if cont:
+            tt = t.unsqueeze(-2)
+            rr = r.transpose(-2, -1)
+            cc = tt @ rr
+            cc = cc.squeeze(-2)
+            return cc
+
     x = t[..., 0]
     y = t[..., 1]
     z = t[..., 2]

@@ -10,7 +10,7 @@ from tqdm import tqdm
 import fastfold.habana as habana
 from fastfold.config import model_config
 from fastfold.data.data_modules import SetupTrainDataset, TrainDataLoader
-from fastfold.habana.distributed import init_dist
+from fastfold.habana.distributed import init_dist, get_data_parallel_world_size
 from fastfold.habana.inject_habana import inject_habana
 from fastfold.model.hub import AlphaFold, AlphaFoldLoss, AlphaFoldLRScheduler
 from fastfold.utils.tensor_utils import tensor_tree_map
@@ -156,7 +156,8 @@ def main():
     model = inject_habana(model)
 
     model = model.to(device="hpu")
-    model = DDP(model)
+    if get_data_parallel_world_size() > 1:
+        model = DDP(model, gradient_as_bucket_view=True, bucket_cap_mb=400)
 
     train_dataset, test_dataset = SetupTrainDataset(
         config=config.data,
@@ -201,27 +202,32 @@ def main():
                     isVerbose=args.hmp_verbose)
         print("========= HMP ENABLED!!")
 
+    idx = 0
     for epoch in range(200):
         model.train()
         train_dataloader = tqdm(train_dataloader)
         for batch in train_dataloader:
             perf = hpu_perf("train step")
-            batch = {k: torch.as_tensor(v).to(device="hpu") for k, v in batch.items()}
+            batch = {k: torch.as_tensor(v).to(device="hpu", non_blocking=True) for k, v in batch.items()}
             optimizer.zero_grad()
+            perf.checknow("prepare input and zero grad")
             output = model(batch)
             perf.checknow("forward")
             
             batch = tensor_tree_map(lambda t: t[..., -1], batch)
+            perf.checknow("prepare loss input")
             loss, loss_breakdown = criterion(output, batch, _return_breakdown=True)
             perf.checknow("loss")
 
             loss.backward()
-            train_dataloader.set_postfix(loss=float(loss))
+            if idx % 10 == 0:
+                train_dataloader.set_postfix(loss=float(loss))
             perf.checknow("backward")
 
             with hmp.disable_casts():
                 optimizer.step()
             perf.checknow("optimizer")
+            idx += 1
 
         lr_scheduler.step()
 

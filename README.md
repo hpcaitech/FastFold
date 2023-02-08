@@ -210,11 +210,12 @@ python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
 
 ### Inference or Training on Intel Habana
 
-To run AlphaFold inference or training on Intel Habana, you can follow the instructions in the [Installation Guide](https://docs.habana.ai/en/latest/Installation_Guide/) to set up your environment on Amazon EC2 DL1 instances or on-premise environments.
+To run AlphaFold inference or training on Intel Habana, you can follow the instructions in the [Installation Guide](https://docs.habana.ai/en/latest/Installation_Guide/) to set up your environment on Amazon EC2 DL1 instances or on-premise environments, and please use SynapseAI R1.7.1 to test as it was verified internally.
 
 Once you have prepared your dataset and installed fastfold, you can use the following scripts:
 
 ```shell
+cd fastfold/habana/fastnn/custom_op/; python setup.py build (this is for Gaudi, for Gaudi2 please use setup2.py) ; cd -
 bash habana/inference.sh
 bash habana/train.sh
 ```

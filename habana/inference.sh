@@ -1,3 +1,6 @@
+export GC_KERNEL_PATH=./fastfold/habana/fastnn/custom_op/libcustom_tpc_perf_lib.so:$GC_KERNEL_PATH
+export PYTHONPATH=./:$PYTHONPATH
+
 # add '--gpus [N]' to use N gpus for inference
 # add '--enable_workflow' to use parallel workflow for data processing
 # add '--use_precomputed_alignments [path_to_alignments]' to use precomputed msa

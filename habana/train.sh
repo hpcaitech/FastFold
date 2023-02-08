@@ -1,4 +1,7 @@
-DATA_DIR=/mnt/usb/training-demo
+export GC_KERNEL_PATH=./fastfold/habana/fastnn/custom_op/libcustom_tpc_perf_lib.so:$GC_KERNEL_PATH
+export PYTHONPATH=./:$PYTHONPATH
+
+DATA_DIR=../FastFold-dataset/train
 
 hpus_per_node=1
 
