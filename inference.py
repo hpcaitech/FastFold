@@ -306,21 +306,22 @@ def inference_multimer_model(args):
     with open(unrelaxed_output_path, 'w') as f:
         f.write(protein.to_pdb(unrelaxed_protein))
 
-    amber_relaxer = relax.AmberRelaxation(
-        use_gpu=True,
-        **config.relax,
-    )
+    if(args.relaxation):
+        amber_relaxer = relax.AmberRelaxation(
+            use_gpu=True,
+            **config.relax,
+        )
 
-    # Relax the prediction.
-    t = time.perf_counter()
-    relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_protein)
-    print(f"Relaxation time: {time.perf_counter() - t}")
+        # Relax the prediction.
+        t = time.perf_counter()
+        relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_protein)
+        print(f"Relaxation time: {time.perf_counter() - t}")
 
-    # Save the relaxed PDB.
-    relaxed_output_path = os.path.join(args.output_dir,
-        f'{output_prefix}_{args.model_name}_relaxed.pdb')
-    with open(relaxed_output_path, 'w') as f:
-        f.write(relaxed_pdb_str)
+        # Save the relaxed PDB.
+        relaxed_output_path = os.path.join(args.output_dir,
+            f'{output_prefix}_{args.model_name}_relaxed.pdb')
+        with open(relaxed_output_path, 'w') as f:
+            f.write(relaxed_pdb_str)
 
 
 def inference_monomer_model(args):
@@ -445,21 +446,22 @@ def inference_monomer_model(args):
     with open(unrelaxed_output_path, 'w') as f:
         f.write(protein.to_pdb(unrelaxed_protein))
 
-    amber_relaxer = relax.AmberRelaxation(
-        use_gpu=True,
-        **config.relax,
-    )
+    if(args.relaxation):
+        amber_relaxer = relax.AmberRelaxation(
+            use_gpu=True,
+            **config.relax,
+        )
 
-    # Relax the prediction.
-    t = time.perf_counter()
-    relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_protein)
-    print(f"Relaxation time: {time.perf_counter() - t}")
+        # Relax the prediction.
+        t = time.perf_counter()
+        relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_protein)
+        print(f"Relaxation time: {time.perf_counter() - t}")
 
-    # Save the relaxed PDB.
-    relaxed_output_path = os.path.join(args.output_dir,
-                                        f'{tag}_{args.model_name}_relaxed.pdb')
-    with open(relaxed_output_path, 'w') as f:
-        f.write(relaxed_pdb_str)
+        # Save the relaxed PDB.
+        relaxed_output_path = os.path.join(args.output_dir,
+                                            f'{tag}_{args.model_name}_relaxed.pdb')
+        with open(relaxed_output_path, 'w') as f:
+            f.write(relaxed_pdb_str)
 
 
 if __name__ == "__main__":
@@ -494,6 +496,9 @@ if __name__ == "__main__":
                         help="""Path to model parameters. If None, parameters are selected
              automatically according to the model name from 
              ./data/params""")
+    parser.add_argument(
+        "--relaxation", action="store_false", default=False,
+    )
     parser.add_argument("--cpus",
                         type=int,
                         default=12,
