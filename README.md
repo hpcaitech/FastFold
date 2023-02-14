@@ -123,7 +123,7 @@ For Dynamic Axial Parallelism, you can refer to `./inference.py`. Here is an exa
 
 ```shell
 python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
-    --output_dir ./ \
+    --output_dir .outputs/ \
     --gpus 2 \
     --uniref90_database_path data/uniref90/uniref90.fasta \
     --mgnify_database_path data/mgnify/mgy_clusters_2022_05.fa \
@@ -133,44 +133,28 @@ python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
     --jackhmmer_binary_path `which jackhmmer` \
     --hhblits_binary_path `which hhblits` \
     --hhsearch_binary_path `which hhsearch` \
-    --kalign_binary_path `which kalign`
+    --kalign_binary_path `which kalign` \
+    --enable_workflow \
+    --inplace
 ```
 or run the script `./inference.sh`, you can change the parameter in the script, especisally those data path.
 ```shell
 ./inference.sh
 ```
 
-#### inference with data workflow
-Alphafold's data pre-processing takes a lot of time, so we speed up the data pre-process by [ray](https://docs.ray.io/en/latest/workflows/concepts.html) workflow, which achieves a 3x times faster speed. To run the inference with ray workflow, you should install the package and add parameter `--enable_workflow` to cmdline or shell script `./inference.sh`
-```shell
-pip install ray==2.0.0 pyarrow
-```
-```shell
-python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
-    --output_dir ./ \
-    --gpus 2 \
-    --uniref90_database_path data/uniref90/uniref90.fasta \
-    --mgnify_database_path data/mgnify/mgy_clusters_2022_05.fa \
-    --pdb70_database_path data/pdb70/pdb70 \
-    --uniref30_database_path data/uniref30/UniRef30_2021_03 \
-    --bfd_database_path data/bfd/bfd_metaclust_clu_complete_id30_c90_final_seq.sorted_opt \
-    --jackhmmer_binary_path `which jackhmmer` \
-    --hhblits_binary_path `which hhblits` \
-    --hhsearch_binary_path `which hhsearch` \
-    --kalign_binary_path `which kalign`  \
-    --enable_workflow 
-```
+Alphafold's data pre-processing takes a lot of time, so we speed up the data pre-process by [ray](https://docs.ray.io/en/latest/workflows/concepts.html) workflow, which achieves a 3x times faster speed. To run the inference with ray workflow, we add parameter `--enable_workflow` by default.
+To reduce memory usage of embedding presentations, we also add parameter `--inplace` to share memory by defaul.
 
 #### inference with lower memory usage
 Alphafold's embedding presentations take up a lot of memory as the sequence length increases. To reduce memory usage, 
-you should add parameter `--chunk_size [N]` and `--inplace` to cmdline or shell script `./inference.sh`. 
+you should add parameter `--chunk_size [N]` to cmdline or shell script `./inference.sh`. 
 The smaller you set N, the less memory will be used, but it will affect the speed. We can inference 
 a sequence of length 10000 in bf16 with 61GB memory on a Nvidia A100(80GB). For fp32, the max length is 8000.
 > You need to set `PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:15000` to inference such an extreme long sequence.
 
 ```shell
 python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
-    --output_dir ./ \
+    --output_dir .outputs/ \
     --gpus 2 \
     --uniref90_database_path data/uniref90/uniref90.fasta \
     --mgnify_database_path data/mgnify/mgy_clusters_2022_05.fa \
@@ -181,8 +165,9 @@ python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
     --hhblits_binary_path `which hhblits` \
     --hhsearch_binary_path `which hhsearch` \
     --kalign_binary_path `which kalign`  \
-    --chunk_size N \
+    --enable_workflow \
     --inplace
+    --chunk_size N \
 ```
 
 #### inference multimer sequence
