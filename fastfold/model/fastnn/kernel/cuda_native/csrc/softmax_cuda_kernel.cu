@@ -426,7 +426,7 @@ at::Tensor fused_mask_softmax_forward(at::Tensor input, at::Tensor mask, long lo
                                       long long cols) {
     CHECK_INPUT(input);
     CHECK_INPUT(mask);
-    const at::cuda::OptionalCUDAGuard device_guard(device_of(input)); 
+    const at::cuda::OptionalCUDAGuard device_guard(device_of(input));
     int head = input.sizes().at(input.sizes().size() - 3);
     // at::Tensor output = at::empty_like(input);
 
