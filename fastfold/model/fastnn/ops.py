@@ -310,7 +310,7 @@ class SelfAttention(nn.Module):
             logits = torch.matmul(q, k.transpose(-1, -2))
 
             if nonbatched_bias is not None:
-                weights = fused_softmax(logits, mask, bias.unsqueeze(1))
+                weights = fused_softmax(logits, mask, bias)
             else:
                 weights = fused_softmax(logits, mask)
 
@@ -343,7 +343,7 @@ class SelfAttention(nn.Module):
                     # logits += bias.unsqueeze(1)
                     # logits += (1e9 * (mask_part - 1))[..., :, None, None, :]
                     # weights = torch.nn.functional.softmax(logits, -1)
-                    weights = fused_softmax(logits, mask_part, bias.unsqueeze(1))
+                    weights = fused_softmax(logits, mask_part, bias)
                 else:
                     # logits += (1e9 * (mask_part - 1))[..., :, None, None, :]
                     # weights = torch.nn.functional.softmax(logits, -1)

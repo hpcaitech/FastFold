@@ -152,7 +152,7 @@ def softmax_grad_kernel_two_rows(d_output_ptr, output_ptr, d_input_ptr, d_output
 
 def softmax_triton_kernel_wrapper(x, mask, bias, n_rows, n_cols):
     y = torch.empty_like(x)
-    n_heads = x.shape[2]
+    n_heads = x.shape[-3]
 
     num_warps = 1
     BLOCK_SIZE = triton.next_power_of_2(n_cols)

@@ -427,7 +427,8 @@ at::Tensor fused_mask_softmax_forward(at::Tensor input, at::Tensor mask, long lo
     CHECK_INPUT(input);
     CHECK_INPUT(mask);
     const at::cuda::OptionalCUDAGuard device_guard(device_of(input));
-    int head = input.sizes()[2];
+    
+    int head = input.sizes().at(input.sizes().size() - 3);
     // at::Tensor output = at::empty_like(input);
 
     int grid = (rows + 3) / 4;
@@ -589,7 +590,7 @@ at::Tensor fused_mask_softmax_backward(at::Tensor d_output, at::Tensor output, a
     CHECK_INPUT(output);
     CHECK_INPUT(mask);
     const at::cuda::OptionalCUDAGuard device_guard(device_of(mask));
-    int head = output.sizes()[2];
+    int head = output.sizes().at(output.sizes().size() - 3);
     at::Tensor grad_input = at::empty_like(output);
 
     int grid = (rows + 3) / 4;
@@ -711,7 +712,7 @@ at::Tensor fused_mask_bias_softmax_forward(at::Tensor input, at::Tensor mask, at
     CHECK_INPUT(mask);
     CHECK_INPUT(bias);
     const at::cuda::OptionalCUDAGuard device_guard(device_of(input));
-    int head = input.sizes()[2];
+    int head = input.sizes().at(input.sizes().size() - 3);
     // at::Tensor output = at::empty_like(input);
 
     int grid = (rows + 3) / 4;
@@ -814,7 +815,7 @@ at::Tensor fused_mask_bias_softmax_backward(at::Tensor d_output, at::Tensor outp
     CHECK_INPUT(output);
     CHECK_INPUT(mask);
     const at::cuda::OptionalCUDAGuard device_guard(device_of(mask));
-    int head = output.sizes()[2];
+    int head = output.sizes().at(output.sizes().size() - 3);
     at::Tensor grad_input = at::empty_like(output);
 
     int grid = (rows + 3) / 4;
