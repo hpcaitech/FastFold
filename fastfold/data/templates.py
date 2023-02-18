@@ -885,13 +885,11 @@ def _process_single_hit(
         # These 3 errors indicate missing mmCIF experimental data rather than a
         # problem with the template search, so turn them into warnings.
         warning = (
-            "%s_%s (sum_probs: %.2f, rank: %d): feature extracting errors: "
+            "%s_%s: feature extracting errors: "
             "%s, mmCIF parsing errors: %s"
             % (
                 hit_pdb_code,
                 hit_chain_id,
-                hit.sum_probs,
-                hit.index,
                 str(e),
                 parsing_result.errors,
             )
@@ -902,13 +900,11 @@ def _process_single_hit(
             return SingleHitResult(features=None, error=None, warning=warning)
     except Error as e:
         error = (
-            "%s_%s (sum_probs: %.2f, rank: %d): feature extracting errors: "
+            "%s_%s: feature extracting errors: "
             "%s, mmCIF parsing errors: %s"
             % (
                 hit_pdb_code,
                 hit_chain_id,
-                hit.sum_probs,
-                hit.index,
                 str(e),
                 parsing_result.errors,
             )
