@@ -53,19 +53,12 @@ python setup.py install
 
 To leverage the power of FastFold, we recommend you to install [Triton](https://github.com/openai/triton).
 
+**NOTE: Triron needs CUDA 11.4 to run.**
+
 ```bash
-pip install triton==2.0.0.dev20221005
+pip install -U --pre triton
 ```
 
-
-### Using PyPi
-You can download FastFold with pre-built CUDA extensions.
-
-Warning, only stable versions available.
-
-```shell
-pip install fastfold -f https://release.colossalai.org/fastfold
-```
 
 ## Use Docker
 
