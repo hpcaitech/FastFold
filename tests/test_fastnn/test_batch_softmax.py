@@ -1,12 +1,21 @@
+# Testing the triton edition softmax only
+# For triton softmax support an additional batch
+
 import torch
-
+import pytest
 from fastfold.model.fastnn.kernel import fused_softmax
-from fastfold.model.fastnn.kernel import softmax
 
+
+TEST_TRITON = True
+try:
+    import triton
+except:
+    print("Skip triton attention test!")
+    TEST_TRITON = False
 
 def _test_softmax_core():
 
-    batch_, chunk_, head_ = 1, 8, 4
+    batch, batch_, chunk_, head_ = 3, 1, 8, 4
     test_seq_ = [31, 32, 128, 129, 256, 259, 512, 700, 1024]
     test_dtype = [torch.float32, torch.float16, torch.bfloat16]
     test_device = torch.device("cuda")
@@ -15,11 +24,11 @@ def _test_softmax_core():
 
     for seq_ in test_seq_:
         for dtype in test_dtype:
-            sample_input = torch.rand(batch_, chunk_, head_, seq_,
+            sample_input = torch.rand(batch, batch_, chunk_, head_, seq_,
                                       seq_).to(device=test_device, dtype=dtype).requires_grad_(True)
-            sample_mask = torch.cuda.FloatTensor(batch_, chunk_, seq_).uniform_() > 0
+            sample_mask = torch.cuda.FloatTensor(batch, batch_, chunk_, seq_).uniform_() > 0
             sample_mask = sample_mask.to(device=test_device, dtype=dtype).requires_grad_(False)
-            sample_bias = torch.rand(batch_, 1, head_, seq_,
+            sample_bias = torch.rand(batch, batch_, 1, head_, seq_,
                                       seq_).to(device=test_device, dtype=dtype).requires_grad_(True)
 
             sample_input_fastnn = torch.clone(sample_input.detach()).requires_grad_(True)
@@ -32,7 +41,8 @@ def _test_softmax_core():
                                                     dim=-1)
 
             fastnn_out = fused_softmax(sample_input_fastnn, sample_mask_fastnn, sample_bias_fastnn)
-
+            # print(sample_bias_fastnn)
+            # print(fastnn_out)
             fwd_fastnn_error = torch.max(torch.abs(torch_out - fastnn_out)).cpu().item()
             assert fwd_fastnn_error < tolerance_eps[
                 dtype], f"fastnn fwd kernel error when {seq_} {dtype}"
@@ -53,11 +63,9 @@ def _test_softmax_core():
                 dtype], f"fastnn bwd kernel error when {seq_} {dtype}"
 
 
+@pytest.mark.skipif(TEST_TRITON == False, reason="triton is not available")
 def test_softmax():
     _test_softmax_core()
-    if softmax._triton_available:
-        softmax._triton_available = False
-        _test_softmax_core()
 
 if __name__ == "__main__":
     test_softmax()
