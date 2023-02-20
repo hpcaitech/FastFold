@@ -27,7 +27,7 @@ def _test_softmax_core():
             sample_bias_fastnn = torch.clone(sample_bias.detach()).requires_grad_(True)
 
             # Forward
-            sample_mask_torch = 1e9 * (sample_mask - 1)[:, :, :, None, None, :]
+            sample_mask_torch = 1e9 * (sample_mask - 1)[:, :, None, None, :]
             torch_out = torch.nn.functional.softmax(sample_input + sample_mask_torch + sample_bias,
                                                     dim=-1)
 
