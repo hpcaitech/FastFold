@@ -439,6 +439,7 @@ config = mlc.ConfigDict(
                     "c_s": c_s,
                     "c_out": 37,
                 },
+                "is_multimer": False,
             },
         },
         "relax": {
@@ -585,5 +586,6 @@ multimer_model_config_update = {
             "c_s": c_s,
             "c_out": 37,
         },
+        "is_multimer": True
     },
 }

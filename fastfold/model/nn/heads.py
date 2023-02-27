@@ -51,7 +51,7 @@ class AuxiliaryHeads(nn.Module):
 
         self.config = config
 
-    def forward(self, outputs):
+    def forward(self, outputs, batch):
         aux_out = {}
         lddt_logits = self.plddt(outputs["sm"]["single"])
         aux_out["lddt_logits"] = lddt_logits
@@ -78,6 +78,12 @@ class AuxiliaryHeads(nn.Module):
             aux_out["predicted_tm_score"] = compute_tm(
                 tm_logits, **self.config.tm
             )
+            if self.config.is_multimer:
+                aux_out["iptm"] = compute_tm(
+                    tm_logits,
+                    asym_id=batch["asym_id"][:, -1],
+                    **self.config.tm,
+                    interface=True)
             aux_out.update(
                 compute_predicted_aligned_error(
                     tm_logits,

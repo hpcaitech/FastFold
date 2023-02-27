@@ -529,6 +529,6 @@ class AlphaFold(nn.Module):
             if habana.is_habana():
                 perf.checknow("cycle finish")
         # Run auxiliary heads
-        outputs.update(self.aux_heads(outputs))
+        outputs.update(self.aux_heads(outputs, batch))
 
         return outputs

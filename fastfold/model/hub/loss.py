@@ -624,9 +624,11 @@ def compute_predicted_aligned_error(
 def compute_tm(
     logits: torch.Tensor,
     residue_weights: Optional[torch.Tensor] = None,
+    asym_id: Optional[torch.Tensor] = None,
     max_bin: int = 31,
     no_bins: int = 64,
     eps: float = 1e-8,
+    interface: bool = False,
     **kwargs,
 ) -> torch.Tensor:
     if residue_weights is None:
@@ -637,7 +639,7 @@ def compute_tm(
     )
 
     bin_centers = _calculate_bin_centers(boundaries)
-    torch.sum(residue_weights)
+    num_res = int(torch.sum(residue_weights).item())
     n = logits.shape[-2]
     clipped_n = max(n, 19)
 
@@ -647,6 +649,11 @@ def compute_tm(
 
     tm_per_bin = 1.0 / (1 + (bin_centers ** 2) / (d0 ** 2))
     predicted_tm_term = torch.sum(probs * tm_per_bin, dim=-1)
+
+    pair_mask = torch.ones(num_res, num_res, device=predicted_tm_term.device)
+    if interface:
+        pair_mask *= (asym_id[:, None] != asym_id[None, :])
+    predicted_tm_term *= pair_mask
 
     normed_residue_mask = residue_weights / (eps + residue_weights.sum())
     per_alignment = torch.sum(predicted_tm_term * normed_residue_mask, dim=-1)
