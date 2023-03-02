@@ -1,3 +1,4 @@
+# Copyright 2021 AlQuraishi Laboratory
 # Copyright 2021 DeepMind Technologies Limited
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,14 +14,16 @@
 # limitations under the License.
 """Amber relaxation."""
 from typing import Any, Dict, Sequence, Tuple
-from fastfold.common import protein
-from fastfold.relax import amber_minimize
-from fastfold.relax import utils
+
 import numpy as np
+
+from fastfold.common import protein
+from fastfold.relax import amber_minimize, utils
 
 
 class AmberRelaxation(object):
     """Amber relaxation."""
+
     def __init__(
         self,
         *,
