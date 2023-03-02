@@ -1,3 +1,4 @@
+# Copyright 2021 AlQuraishi Laboratory
 # Copyright 2021 DeepMind Technologies Limited
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,14 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Utils for minimization."""
+import collections
 import io
 import numbers
-import collections
-from fastfold.common import residue_constants
-from Bio import PDB
+
 import numpy as np
+from Bio import PDB
 from openmm import app as openmm_app
 from openmm.app.internal.pdbstructure import PdbStructure
+
+from fastfold.common import residue_constants
 
 
 def overwrite_pdb_coordinates(pdb_str: str, pos) -> str:

@@ -1,5 +1,7 @@
-import numbers
+# part of code modified from https://github.com/NVIDIA/apex
+from .cuda_native.layer_norm import FusedLayerNormAffineFunction
 import logging
+import numbers
 
 import torch
 from torch.nn.parameter import Parameter
@@ -12,8 +14,6 @@ if _triton_available:
     except ImportError:
         logging.warning("Triton is not available, fallback to old kernel.")
         _triton_available = False
-
-from .cuda_native.layer_norm import FusedLayerNormAffineFunction
 
 
 class FusedLayerNorm(torch.nn.Module):
@@ -42,7 +42,7 @@ class FusedLayerNorm(torch.nn.Module):
                 for i in range(input.shape[-3]):
                     out[i:i + chunk_size] = self.kernel_forward(input[i:i + chunk_size])
             elif len(input.shape) == 4:
-                for j in range(input.shape[-4]):               
+                for j in range(input.shape[-4]):
                     for i in range(0, input.shape[-3], chunk_size):
                         out[j, i:i + chunk_size] = self.kernel_forward(input[j, i:i + chunk_size])
             else:
