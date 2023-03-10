@@ -17,8 +17,7 @@ dependencies:
       - ray==2.0.0
       - pyarrow
       - pandas
-      - --find-links https://release.colossalai.org
-      - colossalai==0.1.10+torch1.12cu11.3
+      - colossalai==0.2.6
   - pytorch::pytorch=1.12
   - pytorch::torchvision
   - pytorch::torchaudio
