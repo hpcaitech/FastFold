@@ -478,6 +478,14 @@ def inference_monomer_model(args):
                                             f'{tag}_{args.model_name}_relaxed.pdb')
         with open(relaxed_output_path, 'w') as f:
             f.write(relaxed_pdb_str)
+    
+    if(args.save_prediction_result):
+        # Save the prediction result .pkl
+            prediction_result_path = os.path.join(
+                args.output_dir, f'{tag}_{args.model_name}.pkl'
+            )
+            with open(prediction_result_path, "wb") as fp:
+                pickle.dump(out, fp)
 
 
 if __name__ == "__main__":
