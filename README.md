@@ -53,7 +53,7 @@ python setup.py install
 
 To leverage the power of FastFold, we recommend you to install [Triton](https://github.com/openai/triton).
 
-**NOTE: Triron needs CUDA 11.4 to run.**
+**NOTE: Triton needs CUDA 11.4 to run.**
 
 ```bash
 pip install -U --pre triton
@@ -130,7 +130,7 @@ python inference.py target.fasta data/pdb_mmcif/mmcif_files/ \
     --enable_workflow \
     --inplace
 ```
-or run the script `./inference.sh`, you can change the parameter in the script, especisally those data path.
+or run the script `./inference.sh`, you can change the parameter in the script, especially those data path.
 ```shell
 ./inference.sh
 ```
