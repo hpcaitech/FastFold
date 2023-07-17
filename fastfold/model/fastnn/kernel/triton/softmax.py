@@ -8,7 +8,7 @@ import triton.language as tl
 def _softmax_core(input_ptrs, output_ptrs, mask_ptrs, bias_ptrs, col_offsets, n_cols,
                   use_mask: tl.constexpr, use_bias: tl.constexpr):
 
-    row = tl.load(input_ptrs, mask=col_offsets < n_cols, other=-float('inf')).to(tl.float32)
+    row = tl.load(input_ptrs, mask=col_offsets < n_cols, other=float("-inf")).to(tl.float32)
 
     if use_bias:
         bias = tl.load(bias_ptrs, mask=col_offsets < n_cols, other=float("-inf")).to(tl.float32)
@@ -44,7 +44,7 @@ def _softmax_grad_core(output_ptrs, d_output_ptrs, d_input_ptrs, col_offsets, n_
 
 @triton.jit
 def softmax_mask_bias_kernel(output_ptr, input_ptr, mask_ptr, bias_ptr, input_row_stride,
-                             output_row_stride, n_cols, n_heads, BLOCK_SIZE: tl.constexpr,
+                             output_row_stride, n_cols, n_heads, n_chunks, BLOCK_SIZE: tl.constexpr,
                              use_mask: tl.constexpr, use_bias: tl.constexpr):
     row_idx = tl.program_id(0).to(tl.int64)
     col_offsets = tl.arange(0, BLOCK_SIZE)
@@ -62,7 +62,7 @@ def softmax_mask_bias_kernel(output_ptr, input_ptr, mask_ptr, bias_ptr, input_ro
 
     bias_ptrs = input_ptrs  # place holder, not use if use_bias == False
     if use_bias:
-        bias_row_ptr = bias_ptr + (row_idx % (n_heads * n_cols)) * n_cols
+        bias_row_ptr = bias_ptr + (((row_idx // (n_chunks * n_heads * n_cols)) * n_heads * n_cols) + (row_idx % (n_heads * n_cols))) * n_cols
         bias_ptrs = bias_row_ptr + col_offsets
 
     _softmax_core(input_ptrs, output_ptrs, mask_ptrs, bias_ptrs, col_offsets, n_cols, use_mask,
@@ -71,7 +71,7 @@ def softmax_mask_bias_kernel(output_ptr, input_ptr, mask_ptr, bias_ptr, input_ro
 
 @triton.jit
 def softmax_mask_bias_kernel_two_rows(output_ptr, input_ptr, mask_ptr, bias_ptr, input_row_stride,
-                                      output_row_stride, n_cols, n_heads, BLOCK_SIZE: tl.constexpr,
+                                      output_row_stride, n_cols, n_heads, n_chunks, BLOCK_SIZE: tl.constexpr,
                                       use_mask: tl.constexpr, use_bias: tl.constexpr):
     row_idx = tl.program_id(0).to(tl.int64)
     col_offsets = tl.arange(0, BLOCK_SIZE)
@@ -89,7 +89,7 @@ def softmax_mask_bias_kernel_two_rows(output_ptr, input_ptr, mask_ptr, bias_ptr,
 
     bias_ptrs = input_ptrs  # place holder, not use if use_bias == False
     if use_bias:
-        bias_row_ptr = bias_ptr + ((2 * row_idx) % (n_heads * n_cols)) * n_cols
+        bias_row_ptr = bias_ptr + ((((2 * row_idx) // (n_chunks * n_heads * n_cols)) * n_heads * n_cols) + ((2 * row_idx) % (n_heads * n_cols))) * n_cols
         bias_ptrs = bias_row_ptr + col_offsets
 
     _softmax_core(input_ptrs, output_ptrs, mask_ptrs, bias_ptrs, col_offsets, n_cols, use_mask,
@@ -102,7 +102,7 @@ def softmax_mask_bias_kernel_two_rows(output_ptr, input_ptr, mask_ptr, bias_ptr,
 
     bias_ptrs = input_ptrs  # place holder, not use if use_bias == False
     if use_bias:
-        bias_row_ptr = bias_ptr + ((2 * row_idx + 1) % (n_heads * n_cols)) * n_cols
+        bias_row_ptr = bias_ptr + ((((2 * row_idx + 1) // (n_chunks * n_heads * n_cols)) * n_heads * n_cols) + ((2 * row_idx + 1) % (n_heads * n_cols))) * n_cols
         bias_ptrs = bias_row_ptr + col_offsets
 
     _softmax_core(input_ptrs + n_cols, output_ptrs + n_cols, mask_ptrs, bias_ptrs, col_offsets,
@@ -152,8 +152,8 @@ def softmax_grad_kernel_two_rows(d_output_ptr, output_ptr, d_input_ptr, d_output
 
 def softmax_triton_kernel_wrapper(x, mask, bias, n_rows, n_cols):
     y = torch.empty_like(x)
-    n_heads = x.shape[2]
-
+    n_heads = x.shape[-3]
+    n_chunks = x.shape[-4]
     num_warps = 1
     BLOCK_SIZE = triton.next_power_of_2(n_cols)
     if BLOCK_SIZE >= 1024:
@@ -178,6 +178,7 @@ def softmax_triton_kernel_wrapper(x, mask, bias, n_rows, n_cols):
         y.stride(-2),
         n_cols,
         n_heads,
+        n_chunks,
         num_warps=num_warps,
         BLOCK_SIZE=BLOCK_SIZE,
         use_mask=(mask != None),

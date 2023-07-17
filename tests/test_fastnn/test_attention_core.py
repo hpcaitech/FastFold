@@ -5,7 +5,7 @@ import pytest
 import torch
 from einops import rearrange
 
-TEST_TRITON = False
+TEST_TRITON = True
 try:
     from fastfold.model.fastnn.kernel import fused_attention_core
 except:
