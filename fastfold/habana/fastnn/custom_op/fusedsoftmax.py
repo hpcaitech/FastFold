@@ -4,9 +4,10 @@
 
 import torch
 import os
+from glob import glob
 import habana_frameworks.torch.core
 
-custom_fusedsoftmax_op_lib_path = "./build/lib.linux-x86_64-3.8/hpu_fusedsoftmax.cpython-38-x86_64-linux-gnu.so"
+custom_fusedsoftmax_op_lib_path = glob('./build/lib.*/*.so')[0]
 my_dir = os.path.realpath(__file__)
 my_len = my_dir.rfind('/')
 base_dir = my_dir[:my_len]
