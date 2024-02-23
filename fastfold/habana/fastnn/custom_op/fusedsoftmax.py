@@ -7,11 +7,7 @@ import os
 from glob import glob
 import habana_frameworks.torch.core
 
-custom_fusedsoftmax_op_lib_path = glob('./build/lib.*/*.so')[0]
-my_dir = os.path.realpath(__file__)
-my_len = my_dir.rfind('/')
-base_dir = my_dir[:my_len]
-torch.ops.load_library(os.path.join(base_dir, custom_fusedsoftmax_op_lib_path))
+torch.ops.load_library(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'build/lib.*/*.so'))[0])
 
 class FusedSoftmaxFunction(torch.autograd.Function):
     @staticmethod
