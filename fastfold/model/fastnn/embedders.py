@@ -185,7 +185,8 @@ class TemplateEmbedder(nn.Module):
                 template_angle_feat = build_template_angle_feat(
                     single_template_feats,
                 )
-
+                template_angle_feat = template_angle_feat.to(dtype=z.dtype)
+                
                 # [*, S_t, N, C_m]
                 a = self.template_angle_embedder(template_angle_feat)
 
