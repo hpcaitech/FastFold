@@ -169,6 +169,13 @@ def main(args):
 def inference_multimer_model(args):
     print("running in multimer mode...")
     config = model_config(args.model_name)
+
+    use_small_bfd = args.preset == 'reduced_dbs'  # (args.bfd_database_path is None)
+    if use_small_bfd:
+        assert args.bfd_database_path is not None
+    else:
+        assert args.bfd_database_path is not None
+        assert args.uniref30_database_path is not None
     
     predict_max_templates = 4
 
@@ -195,7 +202,7 @@ def inference_multimer_model(args):
                     uniref30_database_path=args.uniref30_database_path,
                     uniprot_database_path=args.uniprot_database_path,
                     pdb_seqres_database_path=args.pdb_seqres_database_path,
-                    use_small_bfd=(args.bfd_database_path is None),
+                    use_small_bfd=use_small_bfd,
                     no_cpus=args.cpus
                 )
             else:
@@ -210,7 +217,7 @@ def inference_multimer_model(args):
                     uniref30_database_path=args.uniref30_database_path,
                     uniprot_database_path=args.uniprot_database_path,
                     pdb_seqres_database_path=args.pdb_seqres_database_path,
-                    use_small_bfd=(args.bfd_database_path is None),
+                    use_small_bfd=use_small_bfd,
                     no_cpus=args.cpus
                 )
     else:
