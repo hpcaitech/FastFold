@@ -1,3 +1,7 @@
+from colossalai.legacy import launch_from_torch as _ff_launch_from_torch
+from colossalai.legacy import launch_from_torch as _ff_launch_from_torch
+from colossalai.legacy import launch_from_torch as _ff_launch_from_torch
+from colossalai.legacy import launch_from_torch as _ff_launch_from_torch
 import os
 
 import torch
@@ -36,5 +40,5 @@ def init_dap(tensor_model_parallel_size_=None):
     set_missing_distributed_environ('MASTER_ADDR', "localhost")
     set_missing_distributed_environ('MASTER_PORT', 18417)
 
-    colossalai.launch_from_torch(
+    _ff_launch_from_torch(
         config={"parallel": dict(tensor=dict(size=tensor_model_parallel_size_))})

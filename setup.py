@@ -111,7 +111,7 @@ if CUDA_HOME:
         cc_flag.append('arch=compute_80,code=sm_80')
 
     extra_cuda_flags = [
-        '-std=c++14', '-maxrregcount=50', '-U__CUDA_NO_HALF_OPERATORS__',
+        '-std=c++17', '-maxrregcount=50', '-U__CUDA_NO_HALF_OPERATORS__',
         '-U__CUDA_NO_HALF_CONVERSIONS__', '--expt-relaxed-constexpr', '--expt-extended-lambda'
     ]
 

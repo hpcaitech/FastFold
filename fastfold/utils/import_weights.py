@@ -586,6 +586,7 @@ def get_translation_dict(model, version):
 
 
 def import_jax_weights_(model, npz_path, version="model_1"):
+    npz_path = '/' + npz_path
     data = np.load(npz_path)
 
     translations = get_translation_dict(model, version)

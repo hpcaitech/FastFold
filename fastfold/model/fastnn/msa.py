@@ -18,8 +18,8 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from colossalai.context.parallel_mode import ParallelMode
-from colossalai.core import global_context as gpc
+from colossalai.legacy.context import ParallelMode
+from colossalai.legacy.core import global_context as gpc
 from fastfold.model.fastnn.kernel import LayerNorm, bias_dropout_add
 from fastfold.model.fastnn.ops import (ChunkMSARowAttentionWithPairBias, ChunkTransition, 
                                        SelfAttention, GlobalAttention, Transition, 
